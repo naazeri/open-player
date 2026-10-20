@@ -70,6 +70,12 @@ private struct GeneralTab: View {
                 Toggle("Resume playback where I left off", isOn: $store.value.resumePlayback)
                 Toggle("Resize the window to the video's resolution", isOn: $store.value.resizeWindowToVideo)
             }
+            Section {
+                Toggle("Keep running after closing the window", isOn: $store.value.keepRunningAfterClose)
+            } footer: {
+                Text("Opens files faster next time, but uses some memory in the background.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Mouse") {
                 Toggle("Mouse wheel changes the volume", isOn: $store.value.mouseWheelVolume)
             }

@@ -22,16 +22,24 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
     private var pendingVideoSize: NSSize?
     private var lastVideoSize: NSSize?
 
+    /// True after the user closed the window (it can be shown again; the app may keep running).
+    private(set) var isClosed = false
+    private var closeAfterLeavingFullscreen = false
+
     var onDropURLs: (([URL]) -> Void)?
     var onWillClose: (() -> Void)?
+    /// Whether closing keeps the app running; then a fullscreen window leaves fullscreen first.
+    var keepsRunningOnClose: (() -> Bool)?
     var onResignKey: (() -> Void)?
     var contextMenuProvider: (() -> NSMenu)?
 
     var isFullscreen: Bool { window?.styleMask.contains(.fullScreen) ?? false }
     var isVideoVisible: Bool { if case .video = mode { return true } else { return false } }
 
-    init(player: MPVPlayer) {
-        videoView = VideoView(player: player)
+    /// `videoView` is created by the caller first, because mpv's render context must exist before
+    /// a file starts loading.
+    init(videoView: VideoView) {
+        self.videoView = videoView
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 540),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -182,6 +190,17 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
         window.setFrame(frame, display: true, animate: false)
     }
 
+    func present() {
+        isClosed = false
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// A file started loading: drop the "Drop a file here" hint right away.
+    func showLoading() {
+        placeholder.isHidden = true
+    }
+
     func setTitle(for url: URL?) {
         guard let window else { return }
         window.title = url?.lastPathComponent ?? "Open Player"
@@ -250,8 +269,23 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: NSWindowDelegate
 
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Closing a fullscreen window that stays around: leave fullscreen first, then close.
+        if isFullscreen, keepsRunningOnClose?() == true {
+            closeAfterLeavingFullscreen = true
+            sender.toggleFullScreen(nil)
+            return false
+        }
+        return true
+    }
+
     func windowWillClose(_ notification: Notification) {
+        isClosed = true
         onWillClose?()
+    }
+
+    func windowDidFailToExitFullScreen(_ window: NSWindow) {
+        closeAfterLeavingFullscreen = false
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -264,6 +298,10 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
             fit(videoSize: size, scale: 1)
         } else if let size = lastVideoSize, isVideoVisible {
             window?.contentAspectRatio = size
+        }
+        if closeAfterLeavingFullscreen {
+            closeAfterLeavingFullscreen = false
+            DispatchQueue.main.async { [weak self] in self?.window?.close() }
         }
     }
 }

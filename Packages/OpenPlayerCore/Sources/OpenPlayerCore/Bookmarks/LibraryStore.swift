@@ -70,7 +70,8 @@ public final class LibraryStore {
             }
         }
         // Future schema changes go here as `if version < 2 { ... }`.
-        db.userVersion = Self.schemaVersion
+        // Only write when it changes: a write at every launch would delay the first file.
+        if version != Self.schemaVersion { db.userVersion = Self.schemaVersion }
     }
 
     // MARK: Bookmarks

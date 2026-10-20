@@ -32,7 +32,7 @@ final class PlaylistModel: ObservableObject {
 /// Connects mpv, the window, the playlist, bookmarks and settings, and executes every player action.
 final class PlayerController: NSObject, MPVPlayerDelegate {
     let settings: SettingsStore
-    let mpv = MPVPlayer()
+    let mpv: MPVPlayer
     let bookmarks: BookmarkService
     let playlist = PlaylistModel()
     let state = PlaybackState()
@@ -42,6 +42,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     var onShowSettings: (() -> Void)?
     var onTogglePlaylist: (() -> Void)?
     var onShowBookmarkManager: (() -> Void)?
+    /// The player window was closed while the app keeps running.
+    var onWindowClosed: (() -> Void)?
 
     private var cancellables = Set<AnyCancellable>()
     private var appliedSettings: AppSettings?
@@ -55,44 +57,85 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     private var lastSpeed = 1.0
     private var scrollAccumulator: CGFloat = 0
     private var currentHasVideo = false
+    /// Folder scans run in the background; a newer playlist change makes older results stale.
+    private var scanGeneration = 0
+    private var pendingScan: (generation: Int, url: URL, scope: PlaylistScope)?
 
     private var currentURL: URL? { playlist.currentURL }
 
-    init(settings: SettingsStore, library: LibraryStore) {
+    /// `initialURLs` are the files the app was launched with. A single file starts loading before
+    /// the window is built, so mpv opens it while the interface is being set up.
+    init(settings: SettingsStore, library: LibraryStore, initialURLs: [URL] = []) {
+        // mpv's render context must exist before a file starts loading, or the video can't start.
+        let player = MPVPlayer()
+        let videoView = VideoView(player: player)
         self.settings = settings
+        mpv = player
         bookmarks = BookmarkService(store: library, settings: settings)
         super.init()
 
-        windowController = PlayerWindowController(player: mpv)
         mpv.delegate = self
         mpv.setDouble("volume", settings.value.volume)
         state.volume = settings.value.volume
-
         keyHandler = KeyInputHandler { [weak self] action in self?.perform(action) }
         keyHandler.accepts = { [weak self] event in
-            guard let window = self?.windowController.window else { return false }
+            guard let window = self?.windowController?.window else { return false }
             return event.window === window && !(window.firstResponder is NSText)
         }
-        keyHandler.start()
+        apply(settings.value) // hardware decoding, subtitle options… before the first file
 
+        let firstFile = Self.singleFile(initialURLs)
+        if let firstFile {
+            scanGeneration += 1
+            playlist.items = [firstFile]
+            playlist.currentIndex = 0
+            beginLoad(firstFile, startAt: nil)
+        }
+
+        windowController = PlayerWindowController(videoView: videoView)
+        keyHandler.start()
         wireUpWindow()
         bookmarks.onChange = { [weak self] in
             self?.refreshBookmarkMarkers()
             NotificationCenter.default.post(name: .bookmarksDidChange, object: nil)
         }
         settings.$value.sink { [weak self] value in self?.apply(value) }.store(in: &cancellables)
+
+        if let firstFile {
+            finishLoad(firstFile)
+            scanFolder(around: firstFile)
+            noteRecentDocument(firstFile)
+        } else if !initialURLs.isEmpty {
+            open(initialURLs)
+        }
         render()
     }
 
+    /// The one media file in `urls`, if that's all there is (the usual "open this file" case).
+    private static func singleFile(_ urls: [URL]) -> URL? {
+        guard urls.count == 1, let url = urls.first, !MediaTypes.isSubtitle(url) else { return nil }
+        var directory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &directory), !directory.boolValue else { return nil }
+        return url
+    }
+
     func showWindow() {
-        windowController.showWindow(nil)
-        windowController.window?.makeKeyAndOrderFront(nil)
+        windowController.present()
     }
 
     private func wireUpWindow() {
         let controlBar = windowController.controlBar
         controlBar.onAction = { [weak self] action in self?.perform(action) }
         controlBar.onVolumeChange = { [weak self] volume in self?.setVolume(volume, showOSD: false) }
+        controlBar.onSpeedCycle = { [weak self] in
+            guard let self else { return }
+            self.setSpeed(SpeedSteps.cycle(from: self.state.speed))
+        }
+        controlBar.onSpeedReset = { [weak self] in
+            guard let self, abs(self.state.speed - 1) > 0.001 else { return }
+            self.lastSpeed = self.state.speed
+            self.setSpeed(1)
+        }
         controlBar.seekBar.onSeek = { [weak self] time, final in
             self?.mpv.command(["seek", String(time), final ? "absolute+exact" : "absolute+keyframes"])
         }
@@ -106,7 +149,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         video.onScroll = { [weak self] event in self?.handleScroll(event) }
 
         windowController.onDropURLs = { [weak self] urls in self?.open(urls) }
-        windowController.onWillClose = { NSApp.terminate(nil) }
+        windowController.onWillClose = { [weak self] in self?.windowDidClose() }
+        windowController.keepsRunningOnClose = { [weak self] in self?.settings.value.keepRunningAfterClose ?? false }
         windowController.onResignKey = { [weak self] in self?.keyHandler.stopRepeating() }
         windowController.contextMenuProvider = { [weak self] in self?.makeContextMenu() ?? NSMenu() }
     }
@@ -156,11 +200,11 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
             } else if MediaTypes.isSubtitle(url), currentURL != nil {
                 loadSubtitle(url)
             } else {
-                let items = FolderScanner.playlist(for: url, scope: settings.value.playlistScope)
-                let index = items.firstIndex { $0.standardizedFileURL == url.standardizedFileURL } ?? 0
-                setPlaylist(items, play: index, startAt: startAt)
+                // Play right away; the rest of the folder joins the playlist when the scan finishes.
+                setPlaylist([url], play: 0, startAt: startAt)
+                scanFolder(around: url)
             }
-            NSDocumentController.shared.noteNewRecentDocumentURL(url)
+            noteRecentDocument(url)
             return
         }
 
@@ -180,6 +224,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     }
 
     private func setPlaylist(_ items: [URL], play index: Int, startAt: Double? = nil) {
+        scanGeneration += 1
+        pendingScan = nil
         playlist.items = items
         play(index: index, startAt: startAt)
     }
@@ -189,7 +235,18 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         saveResumePosition()
         let url = playlist.items[index]
         playlist.currentIndex = index
-        bookmarks.syncFromPBF(for: url)
+        beginLoad(url, startAt: startAt)
+        finishLoad(url)
+    }
+
+    /// Hands the file to mpv. Doesn't touch the window, so it can run before the window exists.
+    private func beginLoad(_ url: URL, startAt: Double?) {
+        // Queued before `loadfile`, so it runs before FILE_LOADED (which lists bookmarks for thumbnails).
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.currentURL == url else { return }
+            self.bookmarks.syncFromPBF(for: url)
+            self.refreshBookmarkMarkers()
+        }
 
         var start = startAt
         pendingStartMessage = nil
@@ -201,6 +258,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
 
         var command = ["loadfile", url.path, "replace"]
         if let start { command += ["-1", "start=\(start)"] }
+        Signpost.event("loadfile")
         mpv.command(command)
         mpv.setFlag("pause", false)
 
@@ -208,12 +266,57 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         state.isIdle = false
         state.position = start ?? 0
         state.duration = 0
+    }
+
+    /// Window side of starting a file: title, markers, and bringing back a closed window.
+    private func finishLoad(_ url: URL) {
         windowController.setTitle(for: url)
+        windowController.showLoading()
         refreshBookmarkMarkers()
+        if windowController.isClosed { showWindow() }
         render()
     }
 
+    private func noteRecentDocument(_ url: URL) {
+        DispatchQueue.main.async { NSDocumentController.shared.noteNewRecentDocumentURL(url) }
+    }
+
+    /// Fills the playlist with the rest of `url`'s folder without delaying playback.
+    private func scanFolder(around url: URL) {
+        scanGeneration += 1
+        let generation = scanGeneration
+        let scope = settings.value.playlistScope
+        pendingScan = (generation, url, scope)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let items = FolderScanner.playlist(for: url, scope: scope)
+            DispatchQueue.main.async { self?.applyScan(items, generation: generation, url: url) }
+        }
+    }
+
+    private func applyScan(_ items: [URL], generation: Int, url: URL) {
+        guard generation == scanGeneration, pendingScan?.generation == generation, currentURL == url else { return }
+        pendingScan = nil
+        let key = url.standardizedFileURL
+        guard let index = items.firstIndex(where: { $0.standardizedFileURL == key }) else { return }
+        var items = items
+        items[index] = url // keep the exact URL that is playing (database key, title)
+        playlist.items = items
+        playlist.currentIndex = index
+        render()
+    }
+
+    /// Next/previous file or the end of a file right after opening: finish the folder scan now.
+    private func completePendingScan() {
+        guard let scan = pendingScan else { return }
+        guard scan.generation == scanGeneration, currentURL == scan.url else {
+            pendingScan = nil
+            return
+        }
+        applyScan(FolderScanner.playlist(for: scan.url, scope: scan.scope), generation: scan.generation, url: scan.url)
+    }
+
     private func playRelative(_ offset: Int) {
+        completePendingScan()
         guard let index = playlist.currentIndex else { return }
         let target = index + offset
         if playlist.items.indices.contains(target) {
@@ -226,6 +329,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     func closePlayback() {
         saveResumePosition()
         mpv.command(["stop"])
+        scanGeneration += 1
+        pendingScan = nil
         playlist.currentIndex = nil
         state.isIdle = true
         state.position = 0
@@ -235,6 +340,31 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         windowController.setMode(.idle)
         refreshBookmarkMarkers()
         render()
+    }
+
+    private func windowDidClose() {
+        guard settings.value.keepRunningAfterClose else { return NSApp.terminate(nil) }
+        resetAfterWindowClosed()
+    }
+
+    /// The window was closed but the app keeps running: stop, and start fresh next time.
+    private func resetAfterWindowClosed() {
+        saveResumePosition()
+        mpv.command(["stop"])
+        scanGeneration += 1
+        pendingScan = nil
+        playlist.items = []
+        playlist.currentIndex = nil
+        state.isIdle = true
+        state.isPaused = true
+        state.position = 0
+        state.duration = 0
+        currentHasVideo = false
+        keyHandler.stopRepeating()
+        windowController.setMode(.idle)
+        refreshBookmarkMarkers()
+        render()
+        onWindowClosed?()
     }
 
     // MARK: MPVPlayerDelegate
@@ -267,6 +397,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     }
 
     func mpvFileLoaded() {
+        Signpost.event("fileLoaded")
         let videoTrack = mpv.getInt("current-tracks/video/id")
         let isImage = mpv.getFlag("current-tracks/video/image") ?? false
         let isAlbumArt = mpv.getFlag("current-tracks/video/albumart") ?? false
@@ -276,7 +407,13 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         // report the previous file's dimensions.
         pendingResize = currentHasVideo
         if !currentHasVideo { windowController.setMode(.audio) }
-        if currentHasVideo, let url = currentURL { bookmarks.generateMissingThumbnails(for: url) }
+        if currentHasVideo, let url = currentURL {
+            // Later, so the extra decoder doesn't compete with the first frames for CPU and disk.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, self.currentURL == url else { return }
+                self.bookmarks.generateMissingThumbnails(for: url)
+            }
+        }
         if let message = pendingStartMessage {
             pendingStartMessage = nil
             mpv.showText(message, durationMs: 2500)
@@ -287,6 +424,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     func mpvVideoReconfigured() {
         guard currentHasVideo, let width = mpv.getInt("dwidth"), let height = mpv.getInt("dheight"),
               width > 0, height > 0 else { return }
+        Signpost.event("videoReconfig")
+        VideoLayer.signalNextFrame()
         let size = NSSize(width: CGFloat(width), height: CGFloat(height))
         // Coming from the compact audio window always needs a real size.
         let fromAudio = windowController.mode == .audio
@@ -302,6 +441,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         switch reason {
         case .eof:
             if let url = currentURL { bookmarks.store.clearResumePosition(path: BookmarkService.key(for: url)) }
+            completePendingScan()
             if let index = playlist.currentIndex, index + 1 < playlist.items.count {
                 play(index: index + 1)
             } else {
@@ -356,6 +496,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         case "op-close-menus":
             activeMenu?.cancelTracking()
             activeMenu = nil
+        case "op-close":
+            windowController.window?.performClose(nil)
         case "op-dump":
             let files = bookmarks.bookmarkedFiles().map { file in
                 "\(file.fileName): " + file.bookmarks.map { "\($0.displayTitle) thumb=\($0.thumbnail?.count ?? 0)" }.joined(separator: " | ")
@@ -401,8 +543,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         case .jumpToStart: if active { mpv.commandString("seek 0 absolute") }
         case .jumpToTime: if active { promptJumpToTime() }
 
-        case .speedDown: changeSpeed(by: -s.speedStep)
-        case .speedUp: changeSpeed(by: s.speedStep)
+        case .speedDown: setSpeed(SpeedSteps.down(from: state.speed, step: s.speedStep))
+        case .speedUp: setSpeed(SpeedSteps.up(from: state.speed, step: s.speedStep))
         case .speedReset: resetSpeed()
 
         case .volumeUp: setVolume(state.volume + s.volumeStep, showOSD: true)
@@ -465,23 +607,21 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         mpv.commandString("seek \(seconds) relative")
     }
 
-    private func changeSpeed(by delta: Double) {
-        guard !state.isIdle else { return }
-        let speed = min(4, max(0.1, ((state.speed + delta) * 100).rounded() / 100))
+    /// Speed persists across files in mpv, so it can also be changed while idle.
+    private func setSpeed(_ speed: Double) {
         mpv.setDouble("speed", speed)
-        mpv.showText("Speed: \(ControlBar.speedText(speed))")
+        state.speed = speed
+        render()
+        mpv.showText("Speed: \(SpeedSteps.label(speed))")
     }
 
     /// PotPlayer's "Default/Last used": toggles between normal speed and the last other speed.
     private func resetSpeed() {
-        guard !state.isIdle else { return }
         if abs(state.speed - 1) > 0.001 {
             lastSpeed = state.speed
-            mpv.setDouble("speed", 1)
-            mpv.showText("Speed: 1×")
+            setSpeed(1)
         } else if abs(lastSpeed - 1) > 0.001 {
-            mpv.setDouble("speed", lastSpeed)
-            mpv.showText("Speed: \(ControlBar.speedText(lastSpeed))")
+            setSpeed(lastSpeed)
         }
     }
 
@@ -543,10 +683,14 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     func showBookmarkMenu() {
         guard let window = windowController.window, let view = window.contentView else { return }
         let menu = makeBookmarkMenu()
-        let mouse = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        let point = view.bounds.contains(mouse) ? mouse : NSPoint(x: view.bounds.midX - 150, y: view.bounds.midY + 120)
         activeMenu = menu
-        menu.popUp(positioning: nil, at: point, in: view)
+        if windowController.isClosed || !window.isVisible {
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        } else {
+            let mouse = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            let point = view.bounds.contains(mouse) ? mouse : NSPoint(x: view.bounds.midX - 150, y: view.bounds.midY + 120)
+            menu.popUp(positioning: nil, at: point, in: view)
+        }
         activeMenu = nil
     }
 
@@ -639,10 +783,14 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = !directories
         panel.message = directories ? "Choose a folder to play" : "Choose files or a folder to play"
-        if let window = windowController.window {
-            panel.beginSheetModal(for: window) { [weak self] response in
-                if response == .OK { self?.open(panel.urls) }
-            }
+        let completion: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            if response == .OK { self?.open(panel.urls) }
+        }
+        // A sheet needs a visible window; after the window was closed, use a standalone panel.
+        if let window = windowController.window, window.isVisible, !windowController.isClosed {
+            panel.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            panel.begin(completionHandler: completion)
         }
     }
 

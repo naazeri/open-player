@@ -42,6 +42,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     // Updates
     public var checkForUpdates = true
 
+    // App
+    /// Closing the player window stops playback but keeps the app running, so the next file opens faster.
+    public var keepRunningAfterClose = true
+
     public init() {}
 
     public var keyMap: KeyMap { KeyMap(overrides: keyOverrides) }
@@ -57,6 +61,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case autoLoadSubtitles, subtitleEncoding, subtitleFont, subtitleScale
         case createPBFFiles
         case checkForUpdates
+        case keepRunningAfterClose
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,6 +89,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         subtitleScale = value(.subtitleScale, d.subtitleScale)
         createPBFFiles = value(.createPBFFiles, d.createPBFFiles)
         checkForUpdates = value(.checkForUpdates, d.checkForUpdates)
+        keepRunningAfterClose = value(.keepRunningAfterClose, d.keepRunningAfterClose)
         sanitize()
     }
 

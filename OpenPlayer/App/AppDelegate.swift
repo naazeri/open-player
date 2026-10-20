@@ -12,10 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var settingsWindow: SettingsWindowController?
     private var playlistPanel: PlaylistPanelController?
     private var bookmarkManager: BookmarkManagerWindowController?
-    private var pendingURLs: [URL] = []
     private var menuSubscription: AnyCancellable?
+    private var launchFinished = false
+    /// Files the app was launched with, to ignore AppKit delivering them a second time.
+    private var launchFiles: Set<URL> = []
 
     static func main() {
+        // Otherwise AppKit also turns command-line paths into an "open" event and the file loads twice.
+        UserDefaults.standard.register(defaults: ["NSTreatUnknownArgumentsAsOpen": "NO"])
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -23,14 +27,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         app.run()
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    // Launch order matters for speed: the player (and the file it should play) is created as early as
+    // possible — at will-finish for command-line files, at the open event for files opened from
+    // Finder — so mpv starts reading the file while AppKit and the rest of the app finish launching.
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        Signpost.event("willFinishLaunching")
         library = openLibrary()
         backup = BackupController(settings: settings, library: library)
-        player = PlayerController(settings: settings, library: library)
+        backup.onImported = { [weak self] in self?.player?.bookmarks.onChange?() }
+
+        let arguments = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
+            .map { URL(fileURLWithPath: $0) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+        if !arguments.isEmpty { makePlayer(initialURLs: arguments) }
+    }
+
+    private func makePlayer(initialURLs: [URL]) {
+        launchFiles = Set(initialURLs.map(\.standardizedFileURL))
+        player = PlayerController(settings: settings, library: library, initialURLs: initialURLs)
         player.onShowSettings = { [weak self] in self?.showSettings(nil) }
         player.onTogglePlaylist = { [weak self] in self?.togglePlaylist(nil) }
         player.onShowBookmarkManager = { [weak self] in self?.showBookmarkManager(nil) }
-        backup.onImported = { [weak self] in self?.player.bookmarks.onChange?() }
+        player.onWindowClosed = { [weak self] in self?.playlistPanel?.window?.orderOut(nil) }
+        // mpv can only draw once the video view is on screen; don't wait for the rest of the launch.
+        if !initialURLs.isEmpty { player.showWindow() }
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Signpost.event("didFinishLaunching")
+        if player == nil { makePlayer(initialURLs: []) }
 
         updates = UpdateChecker(settings: settings)
         // Rebuilt when shortcuts or seek steps change, so menus always show the current keys.
@@ -43,14 +69,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             }
         player.showWindow()
         NSApp.activate(ignoringOtherApps: true)
+        launchFinished = true
+    }
 
-        let arguments = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
-            .map { URL(fileURLWithPath: $0) }
-            .filter { FileManager.default.fileExists(atPath: $0.path) }
-        let urls = pendingURLs + arguments
-        pendingURLs = []
-        if !urls.isEmpty { player.open(urls) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.updates.checkInBackgroundIfDue() }
+    /// Also covers launch. The check itself runs at most once a day, which matters now that the
+    /// app can stay running in the background for days.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.updates?.checkInBackgroundIfDue() }
     }
 
     private func openLibrary() -> LibraryStore {
@@ -66,12 +91,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        if let player {
-            player.open(urls)
-            player.showWindow()
-        } else {
-            pendingURLs += urls
+        Signpost.event("openEvent")
+        guard let player else {
+            // Opened from Finder while launching: start the file before the rest of the launch.
+            makePlayer(initialURLs: urls)
+            return
         }
+        if !launchFinished, Set(urls.map(\.standardizedFileURL)) == launchFiles { return }
+        player.open(urls)
+        player.showWindow()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

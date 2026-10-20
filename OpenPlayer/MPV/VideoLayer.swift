@@ -19,6 +19,13 @@ final class VideoLayer: CAOpenGLLayer {
     private var drawCount = 0
     #endif
 
+    /// Set when a new video size is known; the next draw marks the "first frame" signpost.
+    private static var firstFramePending = false
+
+    static func signalNextFrame() {
+        firstFramePending = true
+    }
+
     init(player: MPVPlayer) {
         self.player = player
         (pixelFormat, context) = Self.makeContext()
@@ -144,6 +151,10 @@ final class VideoLayer: CAOpenGLLayer {
             }
         }
         glFlush()
+        if Self.firstFramePending {
+            Self.firstFramePending = false
+            Signpost.event("firstFrame")
+        }
         #if DEBUG
         drawCount += 1
         if drawCount % 300 == 0 { NSLog("VideoLayer: %d frames drawn at %dx%d", drawCount, viewport[2], viewport[3]) }

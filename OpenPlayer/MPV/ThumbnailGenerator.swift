@@ -29,7 +29,7 @@ enum ThumbnailGenerator {
             ("hr-seek", "yes"), ("start", String(max(0, seconds))), ("frames", "1"),
             ("vf", "scale=\(maxWidth):-2"),
         ]
-        for (name, value) in options { mpv_set_option_string(handle, name, value) }
+        for (name, value) in MPVPlayer.disabledScriptOptions + options { MPVPlayer.setOption(handle, name, value) }
         guard mpv_initialize(handle) >= 0 else { return nil }
 
         var args: [UnsafeMutablePointer<CChar>?] = [strdup("loadfile"), strdup(url.path), nil]

@@ -8,6 +8,9 @@ final class ControlBar: NSVisualEffectView {
     let seekBar = SeekBar()
     var onAction: ((PlayerAction) -> Void)?
     var onVolumeChange: ((Double) -> Void)?
+    /// Left click on the speed label (next 0.25 step) and right click (back to 1.0×).
+    var onSpeedCycle: (() -> Void)?
+    var onSpeedReset: (() -> Void)?
 
     private let playButton = ControlBar.button("play.fill", "Play/Pause")
     private let previousButton = ControlBar.button("backward.end.fill", "Previous File (PageUp)")
@@ -18,7 +21,9 @@ final class ControlBar: NSVisualEffectView {
     private let fullscreenButton = ControlBar.button("arrow.up.left.and.arrow.down.right", "Fullscreen (Enter)")
     private let timeLabel = ControlBar.label()
     private let durationLabel = ControlBar.label()
-    private let speedLabel = ControlBar.label()
+    private let speedLabel = SpeedLabel()
+    private var playSymbol = "play.fill"
+    private var volumeSymbol = "speaker.wave.2.fill"
     private let volumeSlider = NSSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
 
     override init(frame frameRect: NSRect) {
@@ -43,8 +48,8 @@ final class ControlBar: NSVisualEffectView {
         volumeSlider.toolTip = "Volume (Up/Down)"
         volumeSlider.widthAnchor.constraint(equalToConstant: 80).isActive = true
 
-        speedLabel.textColor = .systemYellow
-        speedLabel.isHidden = true
+        speedLabel.onClick = { [weak self] in self?.onSpeedCycle?() }
+        speedLabel.onRightClick = { [weak self] in self?.onSpeedReset?() }
         timeLabel.alignment = .right
 
         let stack = NSStackView(views: [
@@ -65,6 +70,8 @@ final class ControlBar: NSVisualEffectView {
             seekBar.heightAnchor.constraint(equalToConstant: 34),
             timeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
             durationLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            // Wide enough for "1.75×", so the bar doesn't shift while cycling.
+            speedLabel.widthAnchor.constraint(equalToConstant: 42),
         ])
     }
 
@@ -73,21 +80,26 @@ final class ControlBar: NSVisualEffectView {
     override var mouseDownCanMoveWindow: Bool { false }
 
     func update(state: PlaybackState) {
-        playButton.image = NSImage(systemSymbolName: state.isPaused || state.isIdle ? "play.fill" : "pause.fill",
-                                   accessibilityDescription: "Play/Pause")
+        let play = state.isPaused || state.isIdle ? "play.fill" : "pause.fill"
+        if play != playSymbol {
+            playSymbol = play
+            playButton.image = Self.symbol(play)
+        }
         timeLabel.stringValue = state.isIdle ? "--:--" : TimeFormat.short(state.position, reference: state.duration)
         durationLabel.stringValue = state.isIdle ? "--:--" : TimeFormat.short(state.duration, reference: state.duration)
         seekBar.duration = state.duration
         seekBar.position = state.position
         seekBar.markers = state.bookmarkPositions
         if !volumeSlider.isHighlighted { volumeSlider.doubleValue = state.volume }
-        let volumeSymbol: String
-        if state.isMuted || state.volume == 0 { volumeSymbol = "speaker.slash.fill" }
-        else if state.volume < 34 { volumeSymbol = "speaker.wave.1.fill" }
-        else { volumeSymbol = "speaker.wave.2.fill" }
-        muteButton.image = NSImage(systemSymbolName: volumeSymbol, accessibilityDescription: "Mute")
-        speedLabel.isHidden = abs(state.speed - 1) < 0.001
-        speedLabel.stringValue = Self.speedText(state.speed)
+        let volume: String
+        if state.isMuted || state.volume == 0 { volume = "speaker.slash.fill" }
+        else if state.volume < 34 { volume = "speaker.wave.1.fill" }
+        else { volume = "speaker.wave.2.fill" }
+        if volume != volumeSymbol {
+            volumeSymbol = volume
+            muteButton.image = Self.symbol(volume)
+        }
+        speedLabel.show(speed: state.speed)
         fullscreenButton.isHidden = !state.hasVideo
         previousButton.isEnabled = state.hasPrevious
         nextButton.isEnabled = state.hasNext
@@ -102,9 +114,18 @@ final class ControlBar: NSVisualEffectView {
     @objc private func fullscreenPressed() { onAction?(.toggleFullscreen) }
     @objc private func volumeChanged() { onVolumeChange?(volumeSlider.doubleValue) }
 
+    /// SF Symbols are loaded once and reused; `update(state:)` runs several times a second.
+    private static var symbols: [String: NSImage] = [:]
+
+    static func symbol(_ name: String) -> NSImage {
+        if let image = symbols[name] { return image }
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) ?? NSImage()
+        symbols[name] = image
+        return image
+    }
+
     private static func button(_ symbol: String, _ tooltip: String) -> NSButton {
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip) ?? NSImage()
-        let button = NSButton(image: image, target: nil, action: nil)
+        let button = NSButton(image: Self.symbol(symbol), target: nil, action: nil)
         button.isBordered = false
         button.bezelStyle = .regularSquare
         button.imagePosition = .imageOnly
@@ -117,13 +138,6 @@ final class ControlBar: NSVisualEffectView {
         return button
     }
 
-    static func speedText(_ speed: Double) -> String {
-        var text = String(format: "%.2f", speed)
-        while text.hasSuffix("0") { text.removeLast() }
-        if text.hasSuffix(".") { text.removeLast() }
-        return text + "×"
-    }
-
     private static func label() -> NSTextField {
         let label = NSTextField(labelWithString: "--:--")
         label.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
@@ -132,4 +146,38 @@ final class ControlBar: NSVisualEffectView {
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
         return label
     }
+}
+
+/// The always-visible speed: click for the next 0.25× step (up to 2×, then 1×), right-click for 1×.
+private final class SpeedLabel: NSTextField {
+    var onClick: (() -> Void)?
+    var onRightClick: (() -> Void)?
+
+    init() {
+        super.init(frame: .zero)
+        isEditable = false
+        isSelectable = false
+        isBordered = false
+        drawsBackground = false
+        alignment = .center
+        font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        toolTip = "Playback speed — click: +0.25× (up to 2×), right-click: 1×"
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        show(speed: 1)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    func show(speed: Double) {
+        let text = SpeedSteps.label(speed)
+        if stringValue != text { stringValue = text }
+        let normal = abs(speed - 1) < 0.001
+        textColor = normal ? NSColor.white.withAlphaComponent(0.75) : .systemYellow
+    }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { onClick?() }
+    override func rightMouseDown(with event: NSEvent) { onRightClick?() }
 }

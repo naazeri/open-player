@@ -231,6 +231,41 @@ final class SettingsAndBackupTests: XCTestCase {
         XCTAssertEqual(settings.playlistScope, .allMedia)
     }
 
+    func testKeepRunningAfterCloseDefaultsAndPersists() throws {
+        XCTAssertTrue(try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).keepRunningAfterClose)
+        let wrongType = #"{"keepRunningAfterClose": "x"}"#
+        XCTAssertTrue(try JSONDecoder().decode(AppSettings.self, from: Data(wrongType.utf8)).keepRunningAfterClose)
+        var settings = AppSettings()
+        settings.keepRunningAfterClose = false
+        let roundTrip = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertFalse(roundTrip.keepRunningAfterClose)
+    }
+
+    func testSpeedSteps() {
+        // Label click: 1.0 → 1.25 → 1.5 → 1.75 → 2.0 → 1.0
+        var speed = 1.0
+        var cycle: [Double] = []
+        for _ in 0..<5 { speed = SpeedSteps.cycle(from: speed); cycle.append(speed) }
+        XCTAssertEqual(cycle, [1.25, 1.5, 1.75, 2.0, 1.0])
+        XCTAssertEqual(SpeedSteps.cycle(from: 1.1), 1.25)
+        XCTAssertEqual(SpeedSteps.cycle(from: 0.8), 1.0)
+        XCTAssertEqual(SpeedSteps.cycle(from: 2.3), 1.0)
+
+        // C/X snap to the 0.1 grid.
+        XCTAssertEqual(SpeedSteps.up(from: 1.75, step: 0.1), 1.8)
+        XCTAssertEqual(SpeedSteps.up(from: 1.8, step: 0.1), 1.9)
+        XCTAssertEqual(SpeedSteps.down(from: 1.75, step: 0.1), 1.7)
+        XCTAssertEqual(SpeedSteps.down(from: 1.8, step: 0.1), 1.7)
+        XCTAssertEqual(SpeedSteps.up(from: 1.0, step: 0.1), 1.1)
+        XCTAssertEqual(SpeedSteps.down(from: 0.1, step: 0.1), 0.1)
+        XCTAssertEqual(SpeedSteps.up(from: 4.0, step: 0.1), 4.0)
+
+        XCTAssertEqual(SpeedSteps.label(1), "1.0×")
+        XCTAssertEqual(SpeedSteps.label(1.25), "1.25×")
+        XCTAssertEqual(SpeedSteps.label(1.1), "1.1×")
+        XCTAssertEqual(SpeedSteps.label(2), "2.0×")
+    }
+
     func testBackupRoundTrip() throws {
         let store = try LibraryStore(path: ":memory:")
         try store.addBookmark(path: "/a.mp4", positionMs: 1000, thumbnail: Data([0xFF, 0xD8]))

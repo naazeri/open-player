@@ -51,9 +51,26 @@ final class MPVPlayer {
         ("sub-delay", MPV_FORMAT_DOUBLE),
     ]
 
+    /// Built-in mpv scripts the app doesn't use. Playback waits until every loaded script has
+    /// started, so leaving them out makes files open sooner (also used by `ThumbnailGenerator`).
+    static let disabledScriptOptions: [(String, String)] = [
+        ("load-scripts", "no"), ("osc", "no"), ("ytdl", "no"), ("load-stats-overlay", "no"),
+        ("load-console", "no"), ("load-select", "no"), ("load-commands", "no"),
+        ("load-context-menu", "no"), ("load-positioning", "no"), ("load-auto-profiles", "no"),
+    ]
+
+    /// Sets an option before `mpv_initialize`; debug builds report names mpv doesn't know.
+    static func setOption(_ handle: OpaquePointer?, _ name: String, _ value: String) {
+        let status = mpv_set_option_string(handle, name, value)
+        #if DEBUG
+        if status < 0 { NSLog("mpv rejected option %@=%@: %s", name, value, mpv_error_string(status)) }
+        #endif
+    }
+
     init() {
         handle = mpv_create()
         guard handle != nil else { fatalError("mpv_create failed") }
+        for (name, value) in Self.disabledScriptOptions { setOption(name, value) }
 
         // Rendering goes through the render API into our own layer.
         setOption("vo", "libmpv")
@@ -62,7 +79,6 @@ final class MPVPlayer {
         setOption("keep-open", "no")
         setOption("input-default-bindings", "no")
         setOption("input-vo-keyboard", "no")
-        setOption("osc", "no")
         setOption("audio-display", "no")
         setOption("osd-on-seek", "msg-bar")
         setOption("osd-duration", "1200")
@@ -141,7 +157,7 @@ final class MPVPlayer {
 
     func setOption(_ name: String, _ value: String) {
         guard let handle else { return }
-        mpv_set_option_string(handle, name, value)
+        Self.setOption(handle, name, value)
     }
 
     func setString(_ name: String, _ value: String) {

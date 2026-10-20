@@ -35,6 +35,10 @@
 - **Smart window.** The window takes the video's resolution (scaled to fit your screen). Audio
   files get a compact player bar instead of a black box.
 - **Resume.** Every file continues where you stopped watching.
+- **Speed control.** The speed is always shown in the control bar. Click it to step through
+  1.0× → 1.25× → 1.5× → 1.75× → 2.0× and back to 1.0×; right-click for 1.0×. C/X change it in 0.1 steps.
+- **Opens fast.** After you close the window, Open Player keeps running in the background, so the
+  next file starts almost instantly (turn this off in **Settings → General** to quit on close).
 - **Subtitles.** Same-name subtitles load automatically, with encoding auto-detection
   (Windows-1256 can be forced for older Persian/Arabic `.srt` files), and adjustable font and size.
 - **Fast and efficient.** Built on [mpv](https://mpv.io) with VideoToolbox hardware decoding.
