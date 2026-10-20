@@ -20,14 +20,18 @@ final class BookmarkMenuBuilder: NSObject {
         self.handlers = handlers
     }
 
-    func makeMenu(files: [BookmarkedFile], currentPath: String?) -> NSMenu {
+    func makeMenu(files: [BookmarkedFile], currentPath: String?, keyMap: KeyMap = KeyMap()) -> NSMenu {
         let menu = NSMenu(title: "Bookmarks")
         menu.autoenablesItems = false
 
-        let add = item("Add Bookmark", key: "P") { [handlers] in handlers.addHere?() }
+        let add = item("Add Bookmark") { [handlers] in handlers.addHere?() }
+        MenuShortcuts.show(.addBookmark, on: add, keyMap: keyMap)
         add.isEnabled = handlers.addHere != nil
         menu.addItem(add)
-        menu.addItem(item("Manage Bookmarks…") { [handlers] in handlers.manage() })
+        let manage = item("Manage Bookmarks…") { [handlers] in handlers.manage() }
+        manage.keyEquivalent = "b"
+        manage.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(manage)
         menu.addItem(.separator())
 
         if files.isEmpty {
@@ -77,13 +81,9 @@ final class BookmarkMenuBuilder: NSObject {
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
-    private func item(_ title: String, key: String = "", action: @escaping () -> Void) -> NSMenuItem {
+    private func item(_ title: String, action: @escaping () -> Void) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: #selector(runAction(_:)), keyEquivalent: "")
         item.target = self
-        if !key.isEmpty {
-            // Shown for reference only; the player's key handler owns the real shortcut.
-            item.toolTip = "Shortcut: \(key)"
-        }
         actions[ObjectIdentifier(item)] = action
         return item
     }

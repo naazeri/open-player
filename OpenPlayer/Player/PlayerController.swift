@@ -565,7 +565,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         )
         let builder = BookmarkMenuBuilder(handlers: handlers)
         menuBuilder = builder
-        return builder.makeMenu(files: bookmarks.bookmarkedFiles(), currentPath: currentURL.map(BookmarkService.key))
+        return builder.makeMenu(files: bookmarks.bookmarkedFiles(), currentPath: currentURL.map(BookmarkService.key),
+                                keyMap: settings.value.keyMap)
     }
 
     func jump(to bookmark: Bookmark) {
@@ -684,8 +685,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
             item.target = self
             item.representedObject = action.rawValue
             item.isEnabled = enabled
-            let combos = settings.value.keyMap.combos(for: action)
-            if let first = combos.first { item.toolTip = first.description }
+            MenuShortcuts.show(action, on: item, keyMap: settings.value.keyMap)
             menu.addItem(item)
         }
         menu.autoenablesItems = false

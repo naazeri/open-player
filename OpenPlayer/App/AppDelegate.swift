@@ -1,8 +1,9 @@
 import AppKit
+import Combine
 import OpenPlayerCore
 
 @main
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private let settings = SettingsStore()
     private var library: LibraryStore!
     private var player: PlayerController!
@@ -12,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var playlistPanel: PlaylistPanelController?
     private var bookmarkManager: BookmarkManagerWindowController?
     private var pendingURLs: [URL] = []
+    private var menuSubscription: AnyCancellable?
 
     static func main() {
         let app = NSApplication.shared
@@ -31,7 +33,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         backup.onImported = { [weak self] in self?.player.bookmarks.onChange?() }
 
         updates = UpdateChecker(settings: settings)
-        NSApp.mainMenu = MainMenuBuilder.build(target: self)
+        // Rebuilt when shortcuts or seek steps change, so menus always show the current keys.
+        menuSubscription = settings.$value
+            .map { [$0.keyOverrides as AnyHashable, $0.seekSteps as AnyHashable] }
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                DispatchQueue.main.async { NSApp.mainMenu = MainMenuBuilder.build(target: self, settings: self.settings.value) }
+            }
         player.showWindow()
         NSApp.activate(ignoringOtherApps: true)
 
@@ -77,6 +86,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
     // MARK: Menu actions
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        // Player shortcuts shown in menus are display-only: never let a key press fire them here.
+        if item.action == #selector(performPlayerAction(_:)), item.tag != MenuShortcuts.nativeTag,
+           MenuShortcuts.isMatchingKeyEquivalent {
+            return false
+        }
+        return true
+    }
 
     @objc func performPlayerAction(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let action = PlayerAction(rawValue: raw) else { return }

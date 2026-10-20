@@ -1,13 +1,17 @@
 import AppKit
 import OpenPlayerCore
 
-/// The menu bar. Player actions carry no key equivalents: the player's key handler owns those keys,
-/// so each item shows its default shortcut as a tooltip instead.
+/// The menu bar. Player actions show their current shortcut like native menu items; those
+/// shortcuts are display-only (see `MenuShortcuts`), the player's key handler performs them.
 enum MainMenuBuilder {
-    static func build(target: AppDelegate) -> NSMenu {
+    private static var settings = AppSettings()
+
+    static func build(target: AppDelegate, settings: AppSettings) -> NSMenu {
+        self.settings = settings
         let main = NSMenu()
         main.addItem(submenu(appMenu(target)))
         main.addItem(submenu(fileMenu(target)))
+        main.addItem(submenu(editMenu()))
         main.addItem(submenu(playbackMenu(target)))
         main.addItem(submenu(audioSubtitleMenu(target)))
         main.addItem(submenu(bookmarksMenu(target)))
@@ -23,12 +27,21 @@ enum MainMenuBuilder {
     }
 
     private static func action(_ action: PlayerAction, _ target: AppDelegate) -> NSMenuItem {
-        let item = NSMenuItem(title: action.title(), action: #selector(AppDelegate.performPlayerAction(_:)), keyEquivalent: "")
+        let item = NSMenuItem(title: action.title(seekSteps: settings.seekSteps),
+                              action: #selector(AppDelegate.performPlayerAction(_:)), keyEquivalent: "")
         item.target = target
         item.representedObject = action.rawValue
-        if let combo = DefaultKeyMap.bindings[action]?.first {
-            item.toolTip = "Default shortcut: \(combo)"
-        }
+        MenuShortcuts.show(action, on: item, keyMap: settings.keyMap)
+        return item
+    }
+
+    /// A player action whose menu shortcut is a real macOS one (it fires from the menu).
+    private static func nativeAction(_ playerAction: PlayerAction, _ target: AppDelegate, _ key: String,
+                                     _ modifiers: NSEvent.ModifierFlags) -> NSMenuItem {
+        let item = action(playerAction, target)
+        item.keyEquivalent = key
+        item.keyEquivalentModifierMask = modifiers
+        item.tag = MenuShortcuts.nativeTag
         return item
     }
 
@@ -63,14 +76,8 @@ enum MainMenuBuilder {
 
     private static func fileMenu(_ target: AppDelegate) -> NSMenu {
         let menu = NSMenu(title: "File")
-        let open = action(.openFile, target)
-        open.keyEquivalent = "o"
-        open.keyEquivalentModifierMask = .command
-        menu.addItem(open)
-        let folder = action(.openFolder, target)
-        folder.keyEquivalent = "o"
-        folder.keyEquivalentModifierMask = [.command, .shift]
-        menu.addItem(folder)
+        menu.addItem(nativeAction(.openFile, target, "o", .command))
+        menu.addItem(nativeAction(.openFolder, target, "o", [.command, .shift]))
 
         let recent = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
         let recentMenu = NSMenu(title: "Open Recent")
@@ -84,6 +91,18 @@ enum MainMenuBuilder {
         menu.addItem(.separator())
         menu.addItem(item("Export Backup…", #selector(AppDelegate.exportBackup(_:)), target: target))
         menu.addItem(item("Import Backup…", #selector(AppDelegate.importBackup(_:)), target: target))
+        return menu
+    }
+
+    private static func editMenu() -> NSMenu {
+        let menu = NSMenu(title: "Edit")
+        menu.addItem(item("Undo", Selector(("undo:")), "z"))
+        menu.addItem(item("Redo", Selector(("redo:")), "z", [.command, .shift]))
+        menu.addItem(.separator())
+        menu.addItem(item("Cut", #selector(NSText.cut(_:)), "x"))
+        menu.addItem(item("Copy", #selector(NSText.copy(_:)), "c"))
+        menu.addItem(item("Paste", #selector(NSText.paste(_:)), "v"))
+        menu.addItem(item("Select All", #selector(NSText.selectAll(_:)), "a"))
         return menu
     }
 
@@ -131,10 +150,7 @@ enum MainMenuBuilder {
 
     private static func windowMenu(_ target: AppDelegate) -> NSMenu {
         let menu = NSMenu(title: "Window")
-        let fullscreen = action(.toggleFullscreen, target)
-        fullscreen.keyEquivalent = "f"
-        fullscreen.keyEquivalentModifierMask = [.command, .control]
-        menu.addItem(fullscreen)
+        menu.addItem(nativeAction(.toggleFullscreen, target, "f", [.command, .control]))
         for playerAction: PlayerAction in [.windowSizeHalf, .windowSizeNormal, .windowSizeOneAndHalf,
                                            .windowSizeDouble, .stayOnTop, .showInfo] {
             menu.addItem(action(playerAction, target))
