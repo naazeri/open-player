@@ -1,0 +1,22 @@
+# Build output
+build/
+DerivedData/
+.build/
+*.xcodeproj/
+xcuserdata/
+*.xcworkspace/
+
+# macOS
+.DS_Store
+._*
+
+# Swift Package Manager / Xcode user state
+.swiftpm/
+Package.resolved
+*.xcuserstate
+
+# Release archives
+*.zip
+
+# Local tooling
+.claude/

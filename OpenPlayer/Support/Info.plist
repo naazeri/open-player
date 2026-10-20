@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Open Player</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.video</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT License</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Open Player reads media, subtitles and bookmark files from external drives.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Open Player reads media, subtitles and bookmark files from network drives.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Open Player plays media from your Desktop and saves captured frames there.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Open Player plays media from your Documents folder.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Open Player plays media from your Downloads folder.</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Media</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.movie</string>
+				<string>public.audio</string>
+				<string>public.audiovisual-content</string>
+				<string>org.matroska.mkv</string>
+				<string>org.matroska.mka</string>
+				<string>org.webmproject.webm</string>
+				<string>public.avi</string>
+				<string>com.microsoft.windows-media-wmv</string>
+				<string>com.microsoft.windows-media-wma</string>
+				<string>public.mpeg-2-transport-stream</string>
+				<string>org.xiph.flac</string>
+				<string>org.xiph.ogg</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Other Media</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>mkv</string>
+				<string>mka</string>
+				<string>webm</string>
+				<string>flv</string>
+				<string>rmvb</string>
+				<string>rm</string>
+				<string>vob</string>
+				<string>ts</string>
+				<string>m2ts</string>
+				<string>mts</string>
+				<string>ogv</string>
+				<string>opus</string>
+				<string>ape</string>
+				<string>srt</string>
+				<string>ass</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

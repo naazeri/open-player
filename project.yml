@@ -1,0 +1,60 @@
+name: OpenPlayer
+options:
+  bundleIdPrefix: app.openplayer
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+
+packages:
+  OpenPlayerCore:
+    path: Packages/OpenPlayerCore
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    ARCHS: arm64
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  OpenPlayer:
+    type: application
+    platform: macOS
+    sources:
+      - path: OpenPlayer
+        excludes:
+          - "**/*.md"
+    dependencies:
+      - package: OpenPlayerCore
+      - sdk: OpenGL.framework
+    settings:
+      base:
+        PRODUCT_NAME: "Open Player"
+        PRODUCT_MODULE_NAME: OpenPlayer
+        PRODUCT_BUNDLE_IDENTIFIER: app.openplayer.OpenPlayer
+        INFOPLIST_FILE: OpenPlayer/Support/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_OBJC_BRIDGING_HEADER: OpenPlayer/Support/OpenPlayer-Bridging-Header.h
+        HEADER_SEARCH_PATHS: /opt/homebrew/opt/mpv/include
+        LIBRARY_SEARCH_PATHS: /opt/homebrew/opt/mpv/lib
+        OTHER_LDFLAGS: -lmpv
+        OTHER_SWIFT_FLAGS: -Xcc -DGL_SILENCE_DEPRECATION
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        ENABLE_HARDENED_RUNTIME: NO
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMBINE_HIDPI_IMAGES: YES
+
+schemes:
+  OpenPlayer:
+    build:
+      targets:
+        OpenPlayer: all
+    run:
+      config: Debug
+    archive:
+      config: Release
