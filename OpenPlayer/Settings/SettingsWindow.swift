@@ -88,7 +88,7 @@ private struct GeneralTab: View {
                 Toggle("Use hardware decoding (VideoToolbox)", isOn: $store.value.hardwareDecoding)
             }
             Section("Updates") {
-                Toggle("Check for new versions on GitHub once a day", isOn: $store.value.checkForUpdates)
+                Toggle("Check for new versions automatically", isOn: $store.value.checkForUpdates)
             }
             Section {
                 Toggle("Create PotPlayer .pbf files for new bookmarks", isOn: $store.value.createPBFFiles)

@@ -2,7 +2,8 @@
 # Builds Open Player.
 #   scripts/build.sh            Debug build, linked against Homebrew's libmpv
 #   scripts/build.sh release    Release build with libmpv and its libraries copied into the app,
-#                               so it keeps working when Homebrew updates or removes mpv
+#                               so it keeps working when Homebrew updates or removes mpv, packed
+#                               as a .zip and a .dmg
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -28,8 +29,13 @@ if [[ $config == Release ]]; then
   rm -rf "build/Open Player.app"
   cp -R "$app" "build/Open Player.app"
   app="build/Open Player.app"
+  # dylibbundler empties Frameworks first; keep Sparkle (already embedded by Xcode) out of its way.
+  sparkle=$(mktemp -d)
+  mv "$app/Contents/Frameworks/Sparkle.framework" "$sparkle/"
   dylibbundler -od -b -x "$app/Contents/MacOS/Open Player" -d "$app/Contents/Frameworks" \
-    -p @executable_path/../Frameworks/ >/dev/null
+    -p @executable_path/../Frameworks/ </dev/null >/dev/null
+  mv "$sparkle/Sparkle.framework" "$app/Contents/Frameworks/"
+  rmdir "$sparkle"
   # dylibbundler can add the same rpath twice, which dyld refuses to load.
   for bin in "$app/Contents/MacOS/Open Player" "$app/Contents/Frameworks/"*.dylib; do
     for rpath in "@executable_path/../Frameworks/" "@executable_path/../Frameworks"; do
@@ -50,7 +56,17 @@ if [[ $config == Release ]]; then
   zip="build/Open-Player-$version-macOS-arm64.zip"
   rm -f "$zip"
   ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
-  echo "Built $app ($(du -sh "$app" | cut -f1), needs macOS $minos+) and $zip ($(du -h "$zip" | cut -f1))."
+
+  # Disk image: the app plus an Applications shortcut to drag it onto.
+  dmg="build/Open-Player-$version-macOS-arm64.dmg"
+  stage=$(mktemp -d)
+  ditto "$app" "$stage/Open Player.app"
+  ln -s /Applications "$stage/Applications"
+  rm -f "$dmg"
+  hdiutil create -quiet -volname "Open Player" -srcfolder "$stage" -fs APFS -format ULFO "$dmg"
+  rm -rf "${stage:?}"
+  codesign --force --sign - "$dmg"
+  echo "Built $app ($(du -sh "$app" | cut -f1), needs macOS $minos+), $zip ($(du -h "$zip" | cut -f1)) and $dmg ($(du -h "$dmg" | cut -f1))."
 else
   echo "Built $app"
 fi

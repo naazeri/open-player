@@ -9,14 +9,17 @@ options:
 packages:
   OpenPlayerCore:
     path: Packages/OpenPlayerCore
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
 
 settings:
   base:
     SWIFT_VERSION: "5.0"
     ARCHS: arm64
     MACOSX_DEPLOYMENT_TARGET: "14.0"
-    MARKETING_VERSION: "1.3.1"
-    CURRENT_PROJECT_VERSION: "6"
+    MARKETING_VERSION: "1.4.0"
+    CURRENT_PROJECT_VERSION: "7"
 
 targets:
   OpenPlayer:
@@ -28,6 +31,7 @@ targets:
           - "**/*.md"
     dependencies:
       - package: OpenPlayerCore
+      - package: Sparkle
       - sdk: OpenGL.framework
     settings:
       base:

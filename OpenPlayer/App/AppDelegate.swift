@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var playlistPanel: PlaylistPanelController?
     private var bookmarkManager: BookmarkManagerWindowController?
     private var menuSubscription: AnyCancellable?
+    private var updateSubscription: AnyCancellable?
     private var launchFinished = false
     /// Files the app was launched with, to ignore AppKit delivering them a second time.
     private var launchFiles: Set<URL> = []
@@ -61,6 +62,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if player == nil { makePlayer(initialURLs: []) }
 
         updates = UpdateChecker(settings: settings)
+        updateSubscription = settings.$value
+            .map(\.checkForUpdates)
+            .removeDuplicates()
+            .sink { [weak self] enabled in self?.updates?.setAutomaticChecks(enabled) }
         // Rebuilt when shortcuts or seek steps change, so menus always show the current keys.
         menuSubscription = settings.$value
             .map { [$0.keyOverrides as AnyHashable, $0.seekSteps as AnyHashable] }
@@ -72,12 +77,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         player.showWindow()
         NSApp.activate(ignoringOtherApps: true)
         launchFinished = true
-    }
-
-    /// Also covers launch. The check itself runs at most once a day, which matters now that the
-    /// app can stay running in the background for days.
-    func applicationDidBecomeActive(_ notification: Notification) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.updates?.checkInBackgroundIfDue() }
     }
 
     private func openLibrary() -> LibraryStore {
@@ -160,7 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         bookmarkManager?.showWindow(nil)
     }
 
-    @objc func checkForUpdates(_ sender: Any?) { updates.check(userInitiated: true) }
+    @objc func checkForUpdates(_ sender: Any?) { updates.check() }
 
     @objc func openProjectPage(_ sender: Any?) {
         NSWorkspace.shared.open(URL(string: "https://github.com/\(UpdateChecker.repository)")!)

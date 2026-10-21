@@ -52,14 +52,16 @@
   Plays practically every format: MKV, MP4, AVI, WebM, HEVC, AV1, FLAC, and many more.
 - **Backup.** Export settings, shortcuts, bookmarks and resume positions to one file and import
   them on another Mac.
-- **Update notifications.** Open Player checks GitHub once a day and tells you when a new version
-  is available (can be turned off in Settings).
+- **Automatic updates.** Open Player checks for a new version once a day, shows what changed, and
+  installs it with one click (via [Sparkle](https://sparkle-project.org), signed and verified).
+  Can be turned off in Settings.
 
 ## Install
 
-1. Download `Open-Player-<version>-macOS-arm64.zip` from the
-   [latest release](https://github.com/naazeri/open-player/releases/latest) and unzip it.
-2. Drag **Open Player.app** into your **Applications** folder.
+1. Download `Open-Player-<version>-macOS-arm64.dmg` from the
+   [latest release](https://github.com/naazeri/open-player/releases/latest) and open it.
+   (A `.zip` of the same app is there too.)
+2. Drag **Open Player** onto the **Applications** shortcut in the window.
 3. Open it. The app is not notarized by Apple, so the first launch is blocked:
    open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**.
    Alternatively, run this once in Terminal:
@@ -114,7 +116,7 @@ cd open-player
 scripts/build.sh release
 ```
 
-This creates `build/Open Player.app` (with libmpv bundled inside) and a zip next to it.
+This creates `build/Open Player.app` (with libmpv bundled inside) and a .zip and .dmg next to it.
 `scripts/build.sh` without arguments makes a Debug build that links Homebrew's libmpv.
 For Xcode, run `xcodegen generate` and open `OpenPlayer.xcodeproj`.
 
@@ -135,7 +137,13 @@ scripts/build.sh              build and packaging
 Every push runs the tests and a build on GitHub Actions (`.github/workflows/ci.yml`). To publish a
 version, set `MARKETING_VERSION` in `project.yml`, add `docs/release-notes/vX.Y.Z.md`, then push a
 tag `vX.Y.Z`; `.github/workflows/release.yml` builds the app on a macOS 26 runner and publishes
-the release with the zip.
+the release with the .dmg, the .zip and `appcast.xml` for in-app updates.
+
+In-app updates need two things: `CURRENT_PROJECT_VERSION` in `project.yml` must be higher than in
+the previous release (Sparkle compares build numbers), and the repository secret
+`SPARKLE_PRIVATE_KEY` must hold the update signing key whose public half is `SUPublicEDKey` in
+`OpenPlayer/Support/Info.plist`. Keep a backup of that key: without it, existing installs can't be
+updated automatically any more.
 
 Run the unit tests with:
 

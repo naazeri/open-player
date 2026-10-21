@@ -2,6 +2,8 @@ name: Release
 
 # Push a tag like v1.4.0 (matching MARKETING_VERSION in project.yml) to build and publish a release.
 # Release notes come from docs/release-notes/<tag>.md; install steps and the checksum are added here.
+# Every release also carries appcast.xml, signed with the SPARKLE_PRIVATE_KEY secret, which the app's
+# updater reads from releases/latest/download/appcast.xml. CURRENT_PROJECT_VERSION must go up each time.
 on:
   push:
     tags: ['v*']
@@ -40,20 +42,64 @@ jobs:
       - name: Build the release
         run: scripts/build.sh release
 
+      - name: Sign the update and write the appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -n "$SPARKLE_PRIVATE_KEY" || { echo "::error::The SPARKLE_PRIVATE_KEY secret is missing"; exit 1; }
+          plist="build/Open Player.app/Contents/Info.plist"
+          build=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$plist")
+          minos=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$plist")
+          # Sparkle compares build numbers: each release needs a higher CURRENT_PROJECT_VERSION.
+          if gh release download --pattern appcast.xml --output "$RUNNER_TEMP/previous.xml" 2>/dev/null; then
+            previous=$(sed -n 's:.*<sparkle\:version>\(.*\)</sparkle\:version>.*:\1:p' "$RUNNER_TEMP/previous.xml" | head -1)
+            if [ -n "$previous" ] && [ "$build" -le "$previous" ]; then
+              echo "::error::CURRENT_PROJECT_VERSION $build must be higher than the last release's ($previous)"
+              exit 1
+            fi
+          fi
+          zip="Open-Player-$VERSION-macOS-arm64.zip"
+          key="$RUNNER_TEMP/sparkle.key"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$key"
+          signature=$(build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update --ed-key-file "$key" "build/$zip")
+          rm -f "$key"
+          {
+            echo '<?xml version="1.0" encoding="utf-8"?>'
+            echo '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'
+            echo '<channel>'
+            echo '<title>Open Player</title>'
+            echo '<item>'
+            echo "<title>Open Player $VERSION</title>"
+            echo "<pubDate>$(date -R)</pubDate>"
+            echo "<sparkle:version>$build</sparkle:version>"
+            echo "<sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>"
+            echo "<sparkle:minimumSystemVersion>$minos</sparkle:minimumSystemVersion>"
+            echo '<description sparkle:format="plain-text"><![CDATA['
+            sed 's/]]>/]] >/g' "docs/release-notes/$GITHUB_REF_NAME.md"
+            echo ']]></description>'
+            echo "<enclosure url=\"https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$zip\" $signature type=\"application/octet-stream\"/>"
+            echo '</item>'
+            echo '</channel>'
+            echo '</rss>'
+          } > build/appcast.xml
+          xmllint --noout build/appcast.xml
+
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           zip="build/Open-Player-$VERSION-macOS-arm64.zip"
+          dmg="build/Open-Player-$VERSION-macOS-arm64.dmg"
           minos=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "build/Open Player.app/Contents/Info.plist")
           major=${minos%%.*}
-          sha=$(shasum -a 256 "$zip" | cut -d' ' -f1)
           {
             cat "docs/release-notes/$GITHUB_REF_NAME.md"
             echo
             echo "### Install"
             echo "1. If Open Player is running, quit it with **⌘Q** first (it may be running in the background without a window)."
-            echo "2. Download **$(basename "$zip")** below, unzip it, and move **Open Player.app** to **Applications** (replace the old version)."
+            echo "2. Download **$(basename "$dmg")** below, open it, and drag **Open Player** onto **Applications** (replace the old version)."
+            echo "   Or download **$(basename "$zip")**, unzip it, and move **Open Player.app** to **Applications**."
             echo "3. The app isn't notarized, so the first launch is blocked: go to **System Settings → Privacy & Security** and click **Open Anyway**, or run:"
             echo '   ```'
             echo '   xattr -dr com.apple.quarantine "/Applications/Open Player.app"'
@@ -61,6 +107,9 @@ jobs:
             echo
             echo "**Requires** an Apple Silicon Mac with **macOS $major or later**."
             echo
-            echo "SHA-256: \`$sha\`"
+            echo "SHA-256:"
+            for file in "$dmg" "$zip"; do
+              echo "- \`$(basename "$file")\`: \`$(shasum -a 256 "$file" | cut -d' ' -f1)\`"
+            done
           } > notes.md
-          gh release create "$GITHUB_REF_NAME" "$zip" --title "Open Player $VERSION" --notes-file notes.md --latest
+          gh release create "$GITHUB_REF_NAME" "$dmg" "$zip" build/appcast.xml --title "Open Player $VERSION" --notes-file notes.md --latest

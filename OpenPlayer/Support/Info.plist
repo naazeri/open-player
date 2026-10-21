@@ -28,6 +28,14 @@
 	<string>NSApplication</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/naazeri/open-player/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>T7b01xb/uYGm5ACSbyVbu1G0Yi599LoHlw10D5yn7Z8=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT License</string>
 	<key>NSRemovableVolumesUsageDescription</key>
