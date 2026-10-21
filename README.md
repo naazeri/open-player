@@ -74,7 +74,7 @@ To make it your default player, select a video in Finder, press **⌘I**, choose
 ### Requirements
 
 - A Mac with Apple Silicon (M1 or later).
-- The downloadable build needs **macOS 27 or later**, because it bundles libraries built for that
+- The downloadable build needs **macOS 26 or later**, because it bundles libraries built for that
   version. On older macOS versions, build it from source (below); it supports macOS 14 and later.
 
 ## Default shortcuts
