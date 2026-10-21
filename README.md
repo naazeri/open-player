@@ -11,6 +11,8 @@
 
 <p align="center">
   <a href="https://github.com/naazeri/open-player/releases/latest"><b>⬇ Download the latest release</b></a>
+  <br>
+  <a href="https://github.com/naazeri/open-player/actions/workflows/ci.yml"><img src="https://github.com/naazeri/open-player/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 <p align="center">
@@ -127,6 +129,13 @@ OpenPlayer/                   macOS app (AppKit + SwiftUI)
 Packages/OpenPlayerCore/      platform-independent logic with unit tests
 scripts/build.sh              build and packaging
 ```
+
+### Releasing
+
+Every push runs the tests and a build on GitHub Actions (`.github/workflows/ci.yml`). To publish a
+version, set `MARKETING_VERSION` in `project.yml`, add `docs/release-notes/vX.Y.Z.md`, then push a
+tag `vX.Y.Z`; `.github/workflows/release.yml` builds the app on a macOS 26 runner and publishes
+the release with the zip.
 
 Run the unit tests with:
 

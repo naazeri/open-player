@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select the newest Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Unit tests (OpenPlayerCore)
+        run: cd Packages/OpenPlayerCore && swift test
+
+      - name: Install build tools
+        run: brew install mpv xcodegen
+
+      - name: Build the app
+        run: scripts/build.sh

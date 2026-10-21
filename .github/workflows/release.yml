@@ -1,0 +1,66 @@
+name: Release
+
+# Push a tag like v1.4.0 (matching MARKETING_VERSION in project.yml) to build and publish a release.
+# Release notes come from docs/release-notes/<tag>.md; install steps and the checksum are added here.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the tag matches the app version
+        run: |
+          version=$(sed -n 's/.*MARKETING_VERSION: "\(.*\)"/\1/p' project.yml)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match MARKETING_VERSION $version in project.yml"
+            exit 1
+          fi
+          test -f "docs/release-notes/$GITHUB_REF_NAME.md" || { echo "::error::docs/release-notes/$GITHUB_REF_NAME.md is missing"; exit 1; }
+
+      - name: Select the newest Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Unit tests (OpenPlayerCore)
+        run: cd Packages/OpenPlayerCore && swift test
+
+      - name: Install build tools
+        run: brew install mpv xcodegen dylibbundler
+
+      - name: Build the release
+        run: scripts/build.sh release
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          zip="build/Open-Player-$VERSION-macOS-arm64.zip"
+          minos=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "build/Open Player.app/Contents/Info.plist")
+          major=${minos%%.*}
+          sha=$(shasum -a 256 "$zip" | cut -d' ' -f1)
+          {
+            cat "docs/release-notes/$GITHUB_REF_NAME.md"
+            echo
+            echo "### Install"
+            echo "1. If Open Player is running, quit it with **⌘Q** first (it may be running in the background without a window)."
+            echo "2. Download **$(basename "$zip")** below, unzip it, and move **Open Player.app** to **Applications** (replace the old version)."
+            echo "3. The app isn't notarized, so the first launch is blocked: go to **System Settings → Privacy & Security** and click **Open Anyway**, or run:"
+            echo '   ```'
+            echo '   xattr -dr com.apple.quarantine "/Applications/Open Player.app"'
+            echo '   ```'
+            echo
+            echo "**Requires** an Apple Silicon Mac with **macOS $major or later**."
+            echo
+            echo "SHA-256: \`$sha\`"
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" "$zip" --title "Open Player $VERSION" --notes-file notes.md --latest
