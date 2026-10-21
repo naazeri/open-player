@@ -22,7 +22,9 @@ enum ThumbnailGenerator {
         guard let handle = mpv_create() else { return nil }
         defer { mpv_terminate_destroy(handle) }
         let options: [(String, String)] = [
-            ("config", "no"), ("terminal", "no"), ("idle", "no"),
+            // idle=yes: with "no", mpv can shut down before `loadfile` arrives (an empty playlist
+            // at start means "quit"), which silently lost some thumbnails.
+            ("config", "no"), ("terminal", "no"), ("idle", "yes"),
             ("vo", "image"), ("vo-image-format", "jpg"), ("vo-image-jpeg-quality", "80"),
             ("vo-image-outdir", folder.path),
             ("ao", "null"), ("audio", "no"), ("sub", "no"), ("hwdec", "no"),

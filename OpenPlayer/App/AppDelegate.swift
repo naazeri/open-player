@@ -19,7 +19,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     static func main() {
         // Otherwise AppKit also turns command-line paths into an "open" event and the file loads twice.
-        UserDefaults.standard.register(defaults: ["NSTreatUnknownArgumentsAsOpen": "NO"])
+        // Also: no macOS window restoration (the app reopens files itself), which otherwise asks
+        // "reopen windows?" after a crash.
+        UserDefaults.standard.register(defaults: ["NSTreatUnknownArgumentsAsOpen": "NO", "ApplePersistenceIgnoreState": "YES"])
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate

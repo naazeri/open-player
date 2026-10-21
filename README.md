@@ -31,10 +31,15 @@
   reads it, keeps it up to date and treats it as the source of truth, so bookmarks stay in sync
   with PotPlayer on Windows (for example on an external drive).
 - **Folder playlist.** Opening a file adds every video and audio file in its folder, in natural
-  order (`Episode 2` before `Episode 10`), and plays them one after another.
+  order (`Episode 2` before `Episode 10`), and plays them one after another. When a file ends,
+  an "up next" card with a 4-second countdown, **Cancel** and **Play Now** appears over the dimmed
+  last frame (length adjustable, or turn it off, in Settings).
 - **Smart window.** The window takes the video's resolution (scaled to fit your screen). Audio
   files get a compact player bar instead of a black box.
 - **Resume.** Every file continues where you stopped watching.
+- **Modern look.** A floating Liquid Glass control bar (macOS 26+) that switches to two rows in
+  narrow windows such as portrait videos. Clicking the video pauses or plays it and briefly shows
+  ▶︎ / ❚❚, like YouTube.
 - **Speed control.** The speed is always shown in the control bar. Click it to step through
   1.0× → 1.25× → 1.5× → 1.75× → 2.0× and back to 1.0×; right-click for 1.0×. C/X change it in 0.1 steps.
 - **Opens fast.** After you close the window, Open Player keeps running in the background, so the

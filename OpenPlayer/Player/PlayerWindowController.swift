@@ -12,6 +12,8 @@ enum DisplayMode: Equatable {
 final class PlayerWindowController: NSWindowController, NSWindowDelegate {
     let videoView: VideoView
     let controlBar = ControlBar()
+    private let upNext = UpNextOverlay()
+    private let playPauseFlash = PlayPauseFlash()
     private let contentContainer = PlayerContentView()
     private let placeholder = NSTextField(labelWithString: "")
 
@@ -26,6 +28,9 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
     private(set) var isClosed = false
     private var closeAfterLeavingFullscreen = false
 
+    var onUpNextCancel: (() -> Void)?
+    var onUpNextPlayNow: (() -> Void)?
+    var isShowingUpNext: Bool { !upNext.isHidden }
     var onDropURLs: (([URL]) -> Void)?
     var onWillClose: (() -> Void)?
     /// Whether closing keeps the app running; then a fullscreen window leaves fullscreen first.
@@ -51,6 +56,9 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
         window.collectionBehavior = [.fullScreenPrimary, .managed]
         window.contentMinSize = NSSize(width: 360, height: 200)
         window.isReleasedWhenClosed = false
+        // The app reopens files itself; macOS window restoration only produced a
+        // "reopen windows?" prompt after a crash.
+        window.isRestorable = false
         window.tabbingMode = .disallowed
         window.setFrameAutosaveName("PlayerWindow")
         super.init(window: window)
@@ -74,7 +82,7 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
         placeholder.font = .systemFont(ofSize: 15)
         placeholder.maximumNumberOfLines = 0
 
-        for view in [videoView, placeholder, controlBar] as [NSView] {
+        for view in [videoView, playPauseFlash, placeholder, controlBar, upNext] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             contentContainer.addSubview(view)
         }
@@ -84,12 +92,23 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
             videoView.topAnchor.constraint(equalTo: contentContainer.topAnchor),
             videoView.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
             placeholder.centerXAnchor.constraint(equalTo: contentContainer.centerXAnchor),
-            placeholder.centerYAnchor.constraint(equalTo: contentContainer.centerYAnchor, constant: -ControlBar.height / 2),
-            controlBar.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            controlBar.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            controlBar.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
-            controlBar.heightAnchor.constraint(equalToConstant: ControlBar.height),
+            placeholder.centerYAnchor.constraint(equalTo: contentContainer.centerYAnchor, constant: -ControlBar.windowHeight / 2),
+            // A floating bar, inset from the window edges.
+            controlBar.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: ControlBar.inset),
+            controlBar.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -ControlBar.inset),
+            controlBar.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor, constant: -ControlBar.inset),
+            playPauseFlash.leadingAnchor.constraint(equalTo: videoView.leadingAnchor),
+            playPauseFlash.trailingAnchor.constraint(equalTo: videoView.trailingAnchor),
+            playPauseFlash.topAnchor.constraint(equalTo: videoView.topAnchor),
+            playPauseFlash.bottomAnchor.constraint(equalTo: videoView.bottomAnchor),
+            upNext.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+            upNext.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+            upNext.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            upNext.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
+        upNext.isHidden = true
+        upNext.onCancel = { [weak self] in self?.onUpNextCancel?() }
+        upNext.onPlayNow = { [weak self] in self?.onUpNextPlayNow?() }
 
         contentContainer.onMouseActivity = { [weak self] in self?.pokeControls() }
         contentContainer.onMouseExit = { [weak self] in self?.hideControlsIfPlaying() }
@@ -127,10 +146,10 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
             videoView.isHidden = true
             if isFullscreen { window.toggleFullScreen(nil) }
             window.contentResizeIncrements = NSSize(width: 1, height: 1)
-            window.contentMinSize = NSSize(width: 460, height: ControlBar.height)
-            window.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: ControlBar.height)
-            let width = max(560, min(window.frame.width, 720))
-            setContentSize(NSSize(width: width, height: ControlBar.height))
+            window.contentMinSize = NSSize(width: ControlBar.audioMinWidth, height: ControlBar.windowHeight)
+            window.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: ControlBar.windowHeight)
+            let width = max(ControlBar.audioMinWidth, min(window.frame.width, 720))
+            setContentSize(NSSize(width: width, height: ControlBar.windowHeight))
             showControls()
 
         case .video(let size):
@@ -196,6 +215,47 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
         window?.makeKeyAndOrderFront(nil)
     }
 
+    /// Brief ▶︎ / ❚❚ in the middle of the video after a click.
+    func flashPlayPause(playing: Bool) {
+        guard isVideoVisible else { return }
+        playPauseFlash.flash(playing: playing)
+    }
+
+    func cancelPlayPauseFlash() {
+        playPauseFlash.cancel()
+    }
+
+    func showUpNext(fileName: String, seconds: Int) {
+        hideTimer?.invalidate()
+        upNext.setCompact(mode == .audio)
+        upNext.show(fileName: fileName, seconds: seconds)
+        // Final size before it becomes visible, so the glass never animates a size change,
+        // then a short fade instead of popping in.
+        upNext.isHidden = true
+        // The glass control bar would sit behind the dialog and re-render (its rim flickers) when
+        // its icons and time change at the end of the file; keep it out of the picture meanwhile.
+        controlBar.isHidden = true
+        controlsVisible = false
+        contentContainer.layoutSubtreeIfNeeded()
+        // Blur and glass views ignore opacity animation, so cross-fade the whole content.
+        let fade = CATransition()
+        fade.type = .fade
+        fade.duration = 0.25
+        contentContainer.layer?.add(fade, forKey: "upNextFade")
+        upNext.isHidden = false
+    }
+
+    func updateUpNext(seconds: Int) {
+        upNext.update(seconds: seconds)
+    }
+
+    func hideUpNext() {
+        guard !upNext.isHidden else { return }
+        upNext.isHidden = true
+        // After Cancel the player sits paused at the end: bring the controls back.
+        if isPaused { showControls() } else { scheduleHide() }
+    }
+
     /// A file started loading: drop the "Drop a file here" hint right away.
     func showLoading() {
         placeholder.isHidden = true
@@ -226,7 +286,11 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
 
     func setPaused(_ paused: Bool) {
         isPaused = paused
-        if paused { showControls() } else { scheduleHide() }
+        if paused {
+            if upNext.isHidden { showControls() }
+        } else {
+            scheduleHide()
+        }
     }
 
     func pokeControls() {
@@ -236,7 +300,7 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
 
     private func showControls() {
         hideTimer?.invalidate()
-        guard !controlsVisible else { return }
+        guard !controlsVisible, upNext.isHidden else { return }
         controlsVisible = true
         controlBar.isHidden = false
         NSAnimationContext.runAnimationGroup { context in
@@ -247,7 +311,7 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
 
     private func scheduleHide() {
         hideTimer?.invalidate()
-        guard isVideoVisible, !isPaused else { return }
+        guard isVideoVisible, !isPaused, upNext.isHidden else { return }
         hideTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
             self?.hideControlsIfPlaying()
         }

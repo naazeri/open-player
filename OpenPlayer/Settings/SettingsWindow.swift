@@ -69,6 +69,11 @@ private struct GeneralTab: View {
                 }
                 Toggle("Resume playback where I left off", isOn: $store.value.resumePlayback)
                 Toggle("Resize the window to the video's resolution", isOn: $store.value.resizeWindowToVideo)
+                Toggle("Ask before playing the next file", isOn: $store.value.nextFileCountdown)
+                Stepper(value: $store.value.nextFileCountdownSeconds, in: 1...30) {
+                    LabeledContent("Countdown", value: "\(store.value.nextFileCountdownSeconds) seconds")
+                }
+                .disabled(!store.value.nextFileCountdown)
             }
             Section {
                 Toggle("Keep running after closing the window", isOn: $store.value.keepRunningAfterClose)

@@ -60,6 +60,13 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     /// Folder scans run in the background; a newer playlist change makes older results stale.
     private var scanGeneration = 0
     private var pendingScan: (generation: Int, url: URL, scope: PlaylistScope)?
+    /// mpv reports the end of a file with `eof-reached` (keep-open); handled once per file.
+    private var endHandled = false
+    private var atEnd = false
+    private var upNextTimer: Timer?
+    private var upNextIndex: Int?
+    /// mpv events that arrived before the window existed (the first file starts loading earlier).
+    private var eventsBeforeWindow: [() -> Void] = []
 
     private var currentURL: URL? { playlist.currentURL }
 
@@ -108,7 +115,19 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         } else if !initialURLs.isEmpty {
             open(initialURLs)
         }
+        let early = eventsBeforeWindow
+        eventsBeforeWindow = []
+        early.forEach { $0() }
         render()
+    }
+
+    /// Runs `work` now, or once the window exists if an mpv event arrives during setup.
+    private func whenWindowReady(_ work: @escaping () -> Void) {
+        if windowController == nil {
+            eventsBeforeWindow.append(work)
+        } else {
+            work()
+        }
     }
 
     /// The one media file in `urls`, if that's all there is (the usual "open this file" case).
@@ -143,11 +162,19 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         let video = windowController.videoView
         video.onClick = { [weak self] in
             guard let self, !self.state.isIdle else { return }
+            // Shows the state the click leads to (like YouTube); a click at the end replays.
+            let willPlay = self.state.isPaused || self.atEnd
             self.togglePause()
+            self.windowController.flashPlayPause(playing: willPlay)
         }
-        video.onDoubleClick = { [weak self] in self?.windowController.toggleFullscreen() }
+        video.onDoubleClick = { [weak self] in
+            self?.windowController.cancelPlayPauseFlash()
+            self?.windowController.toggleFullscreen()
+        }
         video.onScroll = { [weak self] event in self?.handleScroll(event) }
 
+        windowController.onUpNextCancel = { [weak self] in self?.cancelUpNext() }
+        windowController.onUpNextPlayNow = { [weak self] in self?.playUpNext() }
         windowController.onDropURLs = { [weak self] urls in self?.open(urls) }
         windowController.onWillClose = { [weak self] in self?.windowDidClose() }
         windowController.keepsRunningOnClose = { [weak self] in self?.settings.value.keepRunningAfterClose ?? false }
@@ -232,6 +259,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
 
     func play(index: Int, startAt: Double? = nil) {
         guard playlist.items.indices.contains(index) else { return }
+        cancelUpNext()
         saveResumePosition()
         let url = playlist.items[index]
         playlist.currentIndex = index
@@ -263,6 +291,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         mpv.setFlag("pause", false)
 
         pendingResize = false
+        endHandled = false
+        atEnd = false
         state.isIdle = false
         state.position = start ?? 0
         state.duration = 0
@@ -327,6 +357,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     }
 
     func closePlayback() {
+        cancelUpNext()
         saveResumePosition()
         mpv.command(["stop"])
         scanGeneration += 1
@@ -349,6 +380,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
 
     /// The window was closed but the app keeps running: stop, and start fresh next time.
     private func resetAfterWindowClosed() {
+        cancelUpNext()
         saveResumePosition()
         mpv.command(["stop"])
         scanGeneration += 1
@@ -370,6 +402,10 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     // MARK: MPVPlayerDelegate
 
     func mpvPropertyChanged(_ name: String, _ value: MPVValue) {
+        whenWindowReady { [weak self] in self?.handlePropertyChange(name, value) }
+    }
+
+    private func handlePropertyChange(_ name: String, _ value: MPVValue) {
         switch name {
         case "pause":
             let paused = value.bool ?? false
@@ -390,6 +426,14 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
             state.isMuted = value.bool ?? false
         case "speed":
             state.speed = value.double ?? 1
+        case "eof-reached":
+            atEnd = value.bool ?? false
+            if !atEnd {
+                endHandled = false // seeked back after the end: the next end counts again
+            } else if !state.isIdle {
+                handleEndOfFile()
+            }
+            return
         default:
             return
         }
@@ -397,6 +441,10 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     }
 
     func mpvFileLoaded() {
+        whenWindowReady { [weak self] in self?.handleFileLoaded() }
+    }
+
+    private func handleFileLoaded() {
         Signpost.event("fileLoaded")
         let videoTrack = mpv.getInt("current-tracks/video/id")
         let isImage = mpv.getFlag("current-tracks/video/image") ?? false
@@ -422,6 +470,10 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     }
 
     func mpvVideoReconfigured() {
+        whenWindowReady { [weak self] in self?.handleVideoReconfigured() }
+    }
+
+    private func handleVideoReconfigured() {
         guard currentHasVideo, let width = mpv.getInt("dwidth"), let height = mpv.getInt("dheight"),
               width > 0, height > 0 else { return }
         Signpost.event("videoReconfig")
@@ -438,15 +490,14 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     }
 
     func mpvEndFile(_ reason: MPVEndReason) {
+        whenWindowReady { [weak self] in self?.handleEndFile(reason) }
+    }
+
+    private func handleEndFile(_ reason: MPVEndReason) {
         switch reason {
         case .eof:
-            if let url = currentURL { bookmarks.store.clearResumePosition(path: BookmarkService.key(for: url)) }
-            completePendingScan()
-            if let index = playlist.currentIndex, index + 1 < playlist.items.count {
-                play(index: index + 1)
-            } else {
-                finishPlayback()
-            }
+            // With keep-open the end normally arrives as `eof-reached`; this is a fallback.
+            handleEndOfFile()
         case .error(let message):
             let name = currentURL?.lastPathComponent ?? "file"
             finishPlayback()
@@ -496,6 +547,15 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         case "op-close-menus":
             activeMenu?.cancelTracking()
             activeMenu = nil
+        case "op-press":
+            // Clicks the button with this title in the player window (e.g. "Cancel", "Play Now").
+            func find(_ view: NSView) -> NSButton? {
+                if let button = view as? NSButton, button.title == args.dropFirst().joined(separator: " ") { return button }
+                return view.subviews.lazy.compactMap(find).first
+            }
+            if let content = windowController.window?.contentView, let button = find(content) { button.performClick(nil) }
+        case "op-click-video":
+            windowController.videoView.onClick?()
         case "op-close":
             windowController.window?.performClose(nil)
         case "op-dump":
@@ -503,7 +563,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
                 "\(file.fileName): " + file.bookmarks.map { "\($0.displayTitle) thumb=\($0.thumbnail?.count ?? 0)" }.joined(separator: " | ")
             }
             let frame = windowController.window?.frame ?? .zero
-            NSLog("OP-DUMP mode=%@ frame=%@ title=%@ playlist=%@ index=%d volume=%.0f speed=%.2f idle=%d\n%@",
+            NSLog("OP-DUMP upNext=%d mode=%@ frame=%@ title=%@ playlist=%@ index=%d volume=%.0f speed=%.2f idle=%d\n%@",
+                  windowController.isShowingUpNext ? 1 : 0,
                   String(describing: windowController.mode), NSStringFromRect(frame), windowController.window?.title ?? "",
                   playlist.items.map(\.lastPathComponent).joined(separator: ","), playlist.currentIndex ?? -1,
                   state.volume, state.speed, state.isIdle ? 1 : 0, files.joined(separator: "\n"))
@@ -511,6 +572,58 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
             break
         }
         #endif
+    }
+
+    /// The current file played to its end: count down to the next file, play it, or stop.
+    private func handleEndOfFile() {
+        guard !endHandled else { return }
+        endHandled = true
+        if let url = currentURL { bookmarks.store.clearResumePosition(path: BookmarkService.key(for: url)) }
+        completePendingScan()
+        guard let index = playlist.currentIndex, index + 1 < playlist.items.count else {
+            mpv.command(["stop"])
+            finishPlayback()
+            return
+        }
+        if settings.value.nextFileCountdown {
+            startUpNext(index + 1)
+        } else {
+            play(index: index + 1)
+        }
+    }
+
+    // MARK: Up next
+
+    private func startUpNext(_ index: Int) {
+        cancelUpNext()
+        upNextIndex = index
+        var seconds = settings.value.nextFileCountdownSeconds
+        windowController.showUpNext(fileName: playlist.items[index].lastPathComponent, seconds: seconds)
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            seconds -= 1
+            if seconds <= 0 {
+                self.playUpNext()
+            } else {
+                self.windowController.updateUpNext(seconds: seconds)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        upNextTimer = timer
+    }
+
+    private func playUpNext() {
+        guard let index = upNextIndex else { return }
+        cancelUpNext()
+        play(index: index)
+    }
+
+    /// Hides the countdown; the paused last frame stays.
+    private func cancelUpNext() {
+        upNextTimer?.invalidate()
+        upNextTimer = nil
+        upNextIndex = nil
+        windowController?.hideUpNext()
     }
 
     private func finishPlayback() {
@@ -560,7 +673,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         case .showBookmarks: showBookmarkMenu()
 
         case .toggleFullscreen: windowController.toggleFullscreen()
-        case .exitFullscreen: windowController.exitFullscreen()
+        case .exitFullscreen:
+            if windowController.isShowingUpNext { cancelUpNext() } else { windowController.exitFullscreen() }
 
         case .toggleSubtitles: if active { mpv.commandString("cycle sub-visibility") }
         case .cycleSubtitle: if active { mpv.commandString("cycle sub") }
@@ -597,6 +711,14 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     private func togglePause() {
         if state.isIdle {
             if let index = playlist.currentIndex ?? (playlist.items.isEmpty ? nil : 0) { play(index: index) }
+            return
+        }
+        if atEnd {
+            // mpv stays paused at the end of a file (keep-open): play it again from the start.
+            cancelUpNext()
+            endHandled = false
+            mpv.commandString("seek 0 absolute")
+            mpv.setFlag("pause", false)
             return
         }
         mpv.setFlag("pause", !state.isPaused)
@@ -886,6 +1008,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
             self.state.hasNext = index >= 0 && index + 1 < self.playlist.items.count
             self.state.hasVideo = self.currentHasVideo
             self.lastRenderedPosition = self.state.position
+            guard self.windowController != nil else { return }
             self.windowController.controlBar.update(state: self.state)
         }
     }

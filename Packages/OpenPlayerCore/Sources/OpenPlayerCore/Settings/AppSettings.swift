@@ -25,6 +25,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var resumePlayback = true
     public var resizeWindowToVideo = true
     public var playlistScope: PlaylistScope = .allMedia
+    /// When a file ends: show "next file plays in 3" with Cancel / Play Now, instead of playing at once.
+    public var nextFileCountdown = true
+    public var nextFileCountdownSeconds = 4
     public var hardwareDecoding = true
 
     // Subtitles
@@ -62,6 +65,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case createPBFFiles
         case checkForUpdates
         case keepRunningAfterClose
+        case nextFileCountdown
+        case nextFileCountdownSeconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -90,6 +95,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         createPBFFiles = value(.createPBFFiles, d.createPBFFiles)
         checkForUpdates = value(.checkForUpdates, d.checkForUpdates)
         keepRunningAfterClose = value(.keepRunningAfterClose, d.keepRunningAfterClose)
+        nextFileCountdown = value(.nextFileCountdown, d.nextFileCountdown)
+        nextFileCountdownSeconds = value(.nextFileCountdownSeconds, d.nextFileCountdownSeconds)
         sanitize()
     }
 
@@ -104,6 +111,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         volume = max(0, min(volume, 100))
         speedStep = max(0.01, min(speedStep, 1))
         subtitleScale = max(0.2, min(subtitleScale, 5))
+        nextFileCountdownSeconds = max(1, min(nextFileCountdownSeconds, 30))
         if subtitleEncoding.trimmingCharacters(in: .whitespaces).isEmpty { subtitleEncoding = "auto" }
     }
 }

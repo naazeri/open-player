@@ -49,6 +49,7 @@ final class MPVPlayer {
         ("speed", MPV_FORMAT_DOUBLE),
         ("idle-active", MPV_FORMAT_FLAG),
         ("sub-delay", MPV_FORMAT_DOUBLE),
+        ("eof-reached", MPV_FORMAT_FLAG),
     ]
 
     /// Built-in mpv scripts the app doesn't use. Playback waits until every loaded script has
@@ -76,7 +77,8 @@ final class MPVPlayer {
         setOption("vo", "libmpv")
         setOption("hwdec", "auto-safe")
         setOption("idle", "yes")
-        setOption("keep-open", "no")
+        // Stay paused on the last frame when a file ends; the app decides what plays next.
+        setOption("keep-open", "yes")
         setOption("input-default-bindings", "no")
         setOption("input-vo-keyboard", "no")
         setOption("audio-display", "no")

@@ -241,6 +241,17 @@ final class SettingsAndBackupTests: XCTestCase {
         XCTAssertFalse(roundTrip.keepRunningAfterClose)
     }
 
+    func testNextFileCountdownDefaultsAndPersists() throws {
+        XCTAssertTrue(try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).nextFileCountdown)
+        var settings = AppSettings()
+        settings.nextFileCountdown = false
+        XCTAssertFalse(try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings)).nextFileCountdown)
+        XCTAssertEqual(AppSettings().nextFileCountdownSeconds, 4)
+        settings.nextFileCountdownSeconds = 7
+        XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings)).nextFileCountdownSeconds, 7)
+        XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: Data(#"{"nextFileCountdownSeconds": 99}"#.utf8)).nextFileCountdownSeconds, 30)
+    }
+
     func testSpeedSteps() {
         // Label click: 1.0 → 1.25 → 1.5 → 1.75 → 2.0 → 1.0
         var speed = 1.0
