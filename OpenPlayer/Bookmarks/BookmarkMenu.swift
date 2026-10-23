@@ -2,7 +2,8 @@ import AppKit
 import OpenPlayerCore
 
 /// Builds the PotPlayer style "H" menu: files (newest bookmark change first, current file bold),
-/// each with a submenu of its bookmarks in time order. Right-click a bookmark to rename or delete it.
+/// each with a submenu of "Delete" (all of the file's bookmarks) and its bookmarks in time order.
+/// Right-click a bookmark to rename or delete it.
 final class BookmarkMenuBuilder: NSObject {
     struct Handlers {
         var jump: (Bookmark) -> Void
@@ -56,6 +57,11 @@ final class BookmarkMenuBuilder: NSObject {
 
             let submenu = NSMenu(title: file.fileName)
             submenu.autoenablesItems = false
+            // Deletes all of this file's bookmarks (after a confirmation).
+            let delete = item("Delete") { [handlers] in handlers.deleteAll(file) }
+            delete.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
+            submenu.addItem(delete)
+            submenu.addItem(.separator())
             for bookmark in file.bookmarks {
                 let bookmarkItem = NSMenuItem(title: bookmark.displayTitle, action: nil, keyEquivalent: "")
                 let view = BookmarkMenuItemView(bookmark: bookmark)
