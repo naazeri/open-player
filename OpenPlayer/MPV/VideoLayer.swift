@@ -174,9 +174,24 @@ final class VideoView: NSView {
     var onDoubleClick: (() -> Void)?
     var onScroll: ((NSEvent) -> Void)?
     var onRightClick: ((NSEvent) -> Void)?
+    /// Holding the right third of the video plays at 2× (like YouTube). `onHoldStart` returns
+    /// false when it doesn't apply (e.g. paused); the release then counts as a normal click.
+    var onHoldStart: (() -> Bool)?
+    var onHoldEnd: (() -> Void)?
 
     private var mouseDownEvent: NSEvent?
     private var draggedWindow = false
+    /// The click that brings the window to the front only focuses it; it doesn't toggle pause.
+    private var activatingClick: TimeInterval?
+    /// A single click waits this long for a second click, so a double click (fullscreen) doesn't
+    /// pause and resume the video first.
+    private static let clickDelay = min(NSEvent.doubleClickInterval, 0.3)
+    private var pendingClick: DispatchWorkItem?
+    /// The first click of a slow double click already toggled pause; the second toggles it back.
+    private var firstClickToggled = false
+    private static let holdDelay: TimeInterval = 0.4
+    private var pendingHold: DispatchWorkItem?
+    private var isHolding = false
 
     init(player: MPVPlayer) {
         videoLayer = VideoLayer(player: player)
@@ -191,7 +206,13 @@ final class VideoView: NSView {
 
     override var isOpaque: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    /// Accepted so the window can be dragged by the video right away. AppKit only asks for the
+    /// click that brings the window to the front (the app already counts as active by then), so
+    /// that click is remembered and doesn't toggle pause.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        if let event { activatingClick = event.timestamp }
+        return true
+    }
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
@@ -201,28 +222,60 @@ final class VideoView: NSView {
     override func mouseDown(with event: NSEvent) {
         mouseDownEvent = event
         draggedWindow = false
+        if event.clickCount >= 2 {
+            pendingClick?.cancel()
+            pendingClick = nil
+        } else if convert(event.locationInWindow, from: nil).x >= bounds.width * 2 / 3 {
+            let hold = DispatchWorkItem { [weak self] in
+                guard let self, self.mouseDownEvent === event, !self.draggedWindow else { return }
+                self.pendingHold = nil
+                self.isHolding = self.onHoldStart?() ?? false
+            }
+            pendingHold = hold
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdDelay, execute: hold)
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let start = mouseDownEvent, let window, !draggedWindow,
+        guard let start = mouseDownEvent, let window, !draggedWindow, !isHolding,
               window.styleMask.contains(.fullScreen) == false else { return }
         let distance = hypot(event.locationInWindow.x - start.locationInWindow.x,
                              event.locationInWindow.y - start.locationInWindow.y)
         if distance > 3 {
             draggedWindow = true
+            pendingHold?.cancel()
+            pendingHold = nil
             window.performDrag(with: start)
         }
     }
 
     override func mouseUp(with event: NSEvent) {
         defer { mouseDownEvent = nil }
+        pendingHold?.cancel()
+        pendingHold = nil
+        if isHolding {
+            isHolding = false
+            activatingClick = nil
+            onHoldEnd?()
+            return
+        }
         guard !draggedWindow else { return }
-        // Like PotPlayer: a click toggles pause right away; the second click of a double click
-        // toggles it back and switches fullscreen.
+        // A click toggles pause, a double click switches fullscreen.
         if event.clickCount == 1 {
-            onClick?()
+            firstClickToggled = false
+            let activating = activatingClick == mouseDownEvent?.timestamp
+            activatingClick = nil
+            guard !activating else { return }
+            let click = DispatchWorkItem { [weak self] in
+                self?.pendingClick = nil
+                self?.firstClickToggled = true
+                self?.onClick?()
+            }
+            pendingClick = click
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.clickDelay, execute: click)
         } else if event.clickCount == 2 {
-            onClick?()
+            if firstClickToggled { onClick?() }
+            firstClickToggled = false
             onDoubleClick?()
         }
     }

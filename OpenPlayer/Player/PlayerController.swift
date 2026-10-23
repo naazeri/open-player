@@ -55,6 +55,12 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     private var pendingStartMessage: String?
     private var lastResumeSave = Date.distantPast
     private var lastSpeed = 1.0
+    /// The speed to return to when the 2× hold on the video ends.
+    private var speedBeforeHold: Double?
+    private let seekPreviewer = SeekPreviewer()
+    /// The time the seek bar preview shows, while the mouse is over the bar.
+    private var previewTime: Double?
+    private var previewRestTimer: Timer?
     private var scrollAccumulator: CGFloat = 0
     private var currentHasVideo = false
     /// Folder scans run in the background; a newer playlist change makes older results stale.
@@ -155,6 +161,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
             self.lastSpeed = self.state.speed
             self.setSpeed(1)
         }
+        controlBar.seekBar.onHover = { [weak self] time, x in self?.hoverSeekBar(time: time, x: x) }
         controlBar.seekBar.onSeek = { [weak self] time, final in
             self?.mpv.command(["seek", String(time), final ? "absolute+exact" : "absolute+keyframes"])
         }
@@ -163,7 +170,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         video.onClick = { [weak self] in
             guard let self, !self.state.isIdle else { return }
             // Shows the state the click leads to (like YouTube); a click at the end replays.
-            let willPlay = self.state.isPaused || self.atEnd
+            let willPlay = self.isPaused || self.atEnd
             self.togglePause()
             self.windowController.flashPlayPause(playing: willPlay)
         }
@@ -172,6 +179,19 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
             self?.windowController.toggleFullscreen()
         }
         video.onScroll = { [weak self] event in self?.handleScroll(event) }
+        video.onHoldStart = { [weak self] in
+            guard let self, !self.state.isIdle, !self.isPaused, !self.atEnd else { return false }
+            self.speedBeforeHold = self.state.speed
+            self.mpv.setDouble("speed", 2)
+            self.windowController.showFastForward(true)
+            return true
+        }
+        video.onHoldEnd = { [weak self] in
+            guard let self, let speed = self.speedBeforeHold else { return }
+            self.speedBeforeHold = nil
+            self.mpv.setDouble("speed", speed)
+            self.windowController.showFastForward(false)
+        }
 
         windowController.onUpNextCancel = { [weak self] in self?.cancelUpNext() }
         windowController.onUpNextPlayNow = { [weak self] in self?.playUpNext() }
@@ -263,6 +283,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         saveResumePosition()
         let url = playlist.items[index]
         playlist.currentIndex = index
+        closeSeekPreview()
         beginLoad(url, startAt: startAt)
         finishLoad(url)
     }
@@ -358,6 +379,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
 
     func closePlayback() {
         cancelUpNext()
+        closeSeekPreview()
         saveResumePosition()
         mpv.command(["stop"])
         scanGeneration += 1
@@ -381,8 +403,11 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     /// The window was closed but the app keeps running: stop, and start fresh next time.
     private func resetAfterWindowClosed() {
         cancelUpNext()
+        closeSeekPreview()
         saveResumePosition()
         mpv.command(["stop"])
+        // Paused in mpv too, so the next file's "unpause" is a real change that updates the controls.
+        mpv.setFlag("pause", true)
         scanGeneration += 1
         pendingScan = nil
         playlist.items = []
@@ -627,6 +652,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     }
 
     private func finishPlayback() {
+        closeSeekPreview()
+        mpv.setFlag("pause", true) // see resetAfterWindowClosed
         state.isIdle = true
         state.isPaused = true
         currentHasVideo = false
@@ -708,6 +735,41 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         }
     }
 
+    // MARK: Seek bar preview
+
+    /// Moving: a fast keyframe frame. Resting for a moment: the exact frame.
+    private func hoverSeekBar(time: Double?, x: CGFloat) {
+        previewRestTimer?.invalidate()
+        guard let time, currentHasVideo, !state.isIdle, let url = currentURL else {
+            previewTime = nil
+            windowController.hideSeekPreview()
+            return
+        }
+        previewTime = time
+        windowController.showSeekPreview(time: TimeFormat.short(time, reference: state.duration), atSeekBarX: x,
+                                         aspect: mpv.getDouble("video-params/aspect").map { CGFloat($0) })
+        requestPreview(url: url, time: time, exact: false)
+        previewRestTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
+            self?.requestPreview(url: url, time: time, exact: true)
+        }
+    }
+
+    private func requestPreview(url: URL, time: Double, exact: Bool) {
+        seekPreviewer.request(url: url, time: time, exact: exact) { [weak self] image in
+            guard let self, self.previewTime != nil, self.currentURL == url, let image else { return }
+            self.windowController.setSeekPreviewImage(image)
+        }
+    }
+
+    /// The preview's mpv keeps the file open, so it goes when the file does.
+    private func closeSeekPreview() {
+        previewRestTimer?.invalidate()
+        previewTime = nil
+        seekPreviewer.close()
+        windowController?.setSeekPreviewImage(nil)
+        windowController?.hideSeekPreview()
+    }
+
     private func togglePause() {
         if state.isIdle {
             if let index = playlist.currentIndex ?? (playlist.items.isEmpty ? nil : 0) { play(index: index) }
@@ -721,8 +783,12 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
             mpv.setFlag("pause", false)
             return
         }
-        mpv.setFlag("pause", !state.isPaused)
+        mpv.setFlag("pause", !isPaused)
     }
+
+    /// mpv's own pause state. `state.isPaused` follows it through property events, but a toggle
+    /// must never act on a stale copy: that left clicks and Space doing nothing.
+    private var isPaused: Bool { mpv.getFlag("pause") ?? state.isPaused }
 
     private func seek(_ seconds: Double) {
         guard !state.isIdle else { return }

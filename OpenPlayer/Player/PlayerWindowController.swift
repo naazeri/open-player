@@ -14,6 +14,8 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
     let controlBar = ControlBar()
     private let upNext = UpNextOverlay()
     private let playPauseFlash = PlayPauseFlash()
+    private let fastForwardBadge = FastForwardBadge()
+    private let seekPreview = SeekPreviewView()
     private let contentContainer = PlayerContentView()
     private let placeholder = NSTextField(labelWithString: "")
 
@@ -82,7 +84,7 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
         placeholder.font = .systemFont(ofSize: 15)
         placeholder.maximumNumberOfLines = 0
 
-        for view in [videoView, playPauseFlash, placeholder, controlBar, upNext] as [NSView] {
+        for view in [videoView, playPauseFlash, fastForwardBadge, placeholder, controlBar, upNext] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             contentContainer.addSubview(view)
         }
@@ -101,11 +103,15 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
             playPauseFlash.trailingAnchor.constraint(equalTo: videoView.trailingAnchor),
             playPauseFlash.topAnchor.constraint(equalTo: videoView.topAnchor),
             playPauseFlash.bottomAnchor.constraint(equalTo: videoView.bottomAnchor),
+            fastForwardBadge.centerXAnchor.constraint(equalTo: videoView.centerXAnchor),
+            fastForwardBadge.topAnchor.constraint(equalTo: videoView.topAnchor, constant: 16),
             upNext.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             upNext.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             upNext.topAnchor.constraint(equalTo: contentContainer.topAnchor),
             upNext.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
+        // Placed by frame above the control bar (see showSeekPreview), below the up-next card.
+        contentContainer.addSubview(seekPreview, positioned: .below, relativeTo: upNext)
         upNext.isHidden = true
         upNext.onCancel = { [weak self] in self?.onUpNextCancel?() }
         upNext.onPlayNow = { [weak self] in self?.onUpNextPlayNow?() }
@@ -223,6 +229,30 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
 
     func cancelPlayPauseFlash() {
         playPauseFlash.cancel()
+    }
+
+    func showFastForward(_ visible: Bool) {
+        fastForwardBadge.show(visible && isVideoVisible)
+    }
+
+    /// Shows the hover preview above the seek bar at `x` (in seek bar coordinates).
+    func showSeekPreview(time: String, atSeekBarX x: CGFloat, aspect: CGFloat?) {
+        guard isVideoVisible, upNext.isHidden else { return hideSeekPreview() }
+        if let aspect { seekPreview.setAspect(aspect) }
+        let size = seekPreview.preferredSize
+        let anchor = contentContainer.convert(NSPoint(x: x, y: 0), from: controlBar.seekBar)
+        let margin: CGFloat = 8
+        let originX = min(max(margin, anchor.x - size.width / 2), contentContainer.bounds.width - size.width - margin)
+        seekPreview.frame = NSRect(x: originX.rounded(), y: controlBar.frame.maxY + 6, width: size.width, height: size.height)
+        seekPreview.show(time: time)
+    }
+
+    func setSeekPreviewImage(_ image: CGImage?) {
+        seekPreview.setImage(image)
+    }
+
+    func hideSeekPreview() {
+        seekPreview.isHidden = true
     }
 
     func showUpNext(fileName: String, seconds: Int) {

@@ -22,6 +22,11 @@ xcodebuild -project OpenPlayer.xcodeproj -scheme OpenPlayer -configuration $conf
 
 app="build/DerivedData/Build/Products/$config/Open Player.app"
 [[ -d "$app" ]] || { echo "Build failed"; exit 1; }
+# Keep build outputs out of Launch Services, so opening a video always uses the installed app
+# instead of a copy that the next build replaces.
+lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+unregister() { "$lsregister" -u "$1" 2>/dev/null || true; }
+unregister "$app"
 
 if [[ $config == Release ]]; then
   command -v dylibbundler >/dev/null || { echo "Missing dylibbundler: brew install dylibbundler"; exit 1; }
@@ -51,6 +56,7 @@ if [[ $config == Release ]]; then
   done | sort -V | tail -1)
   /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $minos" "$app/Contents/Info.plist"
   codesign --force --deep --sign - "$app"
+  unregister "$app"
 
   version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Contents/Info.plist")
   zip="build/Open-Player-$version-macOS-arm64.zip"

@@ -144,6 +144,7 @@ final class ControlBar: NSView {
         seekBar.duration = state.duration
         seekBar.position = state.position
         seekBar.markers = state.bookmarkPositions
+        seekBar.showsHoverTime = !state.hasVideo
         if !volumeSlider.isHighlighted { volumeSlider.doubleValue = state.volume }
         let volume: String
         if state.isMuted || state.volume == 0 { volume = "speaker.slash.fill" }

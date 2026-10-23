@@ -9,6 +9,10 @@ final class SeekBar: NSView {
     var markers: [Double] = [] { didSet { if markers != oldValue { needsDisplay = true } } }
     /// Called while dragging (`final == false`) and on release (`final == true`).
     var onSeek: ((Double, Bool) -> Void)?
+    /// The time under the mouse and its x position (nil when the mouse leaves), for the preview.
+    var onHover: ((Double?, CGFloat) -> Void)?
+    /// Off while a preview picture shows the time instead.
+    var showsHoverTime = true { didSet { if showsHoverTime != oldValue { needsDisplay = true } } }
 
     private(set) var isDragging = false
     private var dragPosition: Double = 0
@@ -42,11 +46,19 @@ final class SeekBar: NSView {
     override func mouseMoved(with event: NSEvent) {
         hoverX = convert(event.locationInWindow, from: nil).x
         needsDisplay = true
+        reportHover()
     }
 
     override func mouseExited(with event: NSEvent) {
         hoverX = nil
         needsDisplay = true
+        if !isDragging { onHover?(nil, 0) }
+    }
+
+    private func reportHover() {
+        guard let hoverX, duration > 0 else { return }
+        let track = trackRect
+        onHover?(time(atX: hoverX), min(max(hoverX, track.minX), track.maxX))
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -59,6 +71,7 @@ final class SeekBar: NSView {
         guard isDragging else { return }
         hoverX = convert(event.locationInWindow, from: nil).x
         update(with: event, final: false)
+        reportHover()
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -66,6 +79,11 @@ final class SeekBar: NSView {
         update(with: event, final: true)
         isDragging = false
         position = dragPosition
+        // Released outside the bar: no mouseExited follows.
+        if !bounds.contains(convert(event.locationInWindow, from: nil)) {
+            hoverX = nil
+            onHover?(nil, 0)
+        }
     }
 
     private func update(with event: NSEvent, final: Bool) {
@@ -111,7 +129,7 @@ final class SeekBar: NSView {
             NSBezierPath(ovalIn: NSRect(x: progressX - 6, y: track.midY - 6, width: 12, height: 12)).fill()
         }
 
-        if let hoverX, duration > 0 {
+        if let hoverX, duration > 0, showsHoverTime {
             let label = TimeFormat.short(time(atX: hoverX), reference: duration)
             let text = NSAttributedString(string: label, attributes: [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),

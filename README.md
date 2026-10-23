@@ -42,8 +42,12 @@
 - **Modern look.** A floating Liquid Glass control bar (macOS 26+) that switches to two rows in
   narrow windows such as portrait videos. Clicking the video pauses or plays it and briefly shows
   ▶︎ / ❚❚, like YouTube.
+- **Timeline preview.** Hovering the seek bar shows the frame at that point above it, like
+  YouTube, without touching playback: a nearby keyframe right away, the exact frame once the
+  mouse rests.
 - **Speed control.** The speed is always shown in the control bar. Click it to step through
   1.0× → 1.25× → 1.5× → 1.75× → 2.0× and back to 1.0×; right-click for 1.0×. C/X change it in 0.1 steps.
+  Like YouTube, press and hold the right third of the video to play at 2× until you let go.
 - **Opens fast.** After you close the window, Open Player keeps running in the background, so the
   next file starts almost instantly (turn this off in **Settings → General** to quit on close).
 - **Subtitles.** Same-name subtitles load automatically, with encoding auto-detection
