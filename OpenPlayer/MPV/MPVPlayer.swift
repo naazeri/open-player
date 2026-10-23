@@ -76,6 +76,11 @@ final class MPVPlayer {
         // Rendering goes through the render API into our own layer.
         setOption("vo", "libmpv")
         setOption("hwdec", "auto-safe")
+        // mpv's default macOS output (avfoundation) queues about 1.5 s of audio, and volume is
+        // applied before that queue, so volume changes were heard late. Core Audio: ~0.2 s.
+        setOption("ao", "coreaudio,avfoundation")
+        // Core Audio refuses mono output (mpv falls back to avfoundation), so mono plays as stereo.
+        setOption("audio-channels", "stereo,5.1,7.1")
         setOption("idle", "yes")
         // Stay paused on the last frame when a file ends; the app decides what plays next.
         setOption("keep-open", "yes")
