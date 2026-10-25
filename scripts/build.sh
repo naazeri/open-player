@@ -55,7 +55,15 @@ if [[ $config == Release ]]; then
     otool -l "$f" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; f=0}'
   done | sort -V | tail -1)
   /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $minos" "$app/Contents/Info.plist"
-  codesign --force --deep --sign - "$app"
+  # A fixed signing identity keeps the app's identity the same across updates, so macOS keeps
+  # the folder permissions people granted (with ad-hoc signing every build is a new app to it,
+  # and opening files could wait on a permission answer). Self-signed is enough for that.
+  identity="${SIGN_IDENTITY:-Open Player Code Signing}"
+  if ! security find-identity -p codesigning | grep -q "\"$identity\""; then
+    echo "warning: signing identity \"$identity\" not found, signing ad-hoc (folder permissions reset with every update)"
+    identity=-
+  fi
+  codesign --force --deep --sign "$identity" "$app"
   unregister "$app"
 
   version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Contents/Info.plist")

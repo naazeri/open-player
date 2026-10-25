@@ -16,6 +16,8 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
     private let playPauseFlash = PlayPauseFlash()
     private let fastForwardBadge = FastForwardBadge()
     private let seekPreview = SeekPreviewView()
+    private let openingHint = NSStackView()
+    private let openingHintLabel = NSTextField(wrappingLabelWithString: "")
     private let contentContainer = PlayerContentView()
     private let placeholder = NSTextField(labelWithString: "")
 
@@ -109,6 +111,26 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
             upNext.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             upNext.topAnchor.constraint(equalTo: contentContainer.topAnchor),
             upNext.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+        ])
+        // Shown when a file takes long to open, usually because macOS waits for folder access.
+        openingHintLabel.alignment = .center
+        openingHintLabel.textColor = .secondaryLabelColor
+        openingHintLabel.font = .systemFont(ofSize: 13)
+        openingHintLabel.preferredMaxLayoutWidth = 420
+        let settingsButton = NSButton(title: "Open Privacy Settings", target: self, action: #selector(openPrivacySettings))
+        settingsButton.bezelStyle = .rounded
+        openingHint.orientation = .vertical
+        openingHint.spacing = 12
+        openingHint.addArrangedSubview(openingHintLabel)
+        openingHint.addArrangedSubview(settingsButton)
+        openingHint.appearance = NSAppearance(named: .darkAqua)
+        openingHint.translatesAutoresizingMaskIntoConstraints = false
+        openingHint.isHidden = true
+        contentContainer.addSubview(openingHint, positioned: .below, relativeTo: controlBar)
+        NSLayoutConstraint.activate([
+            openingHint.centerXAnchor.constraint(equalTo: contentContainer.centerXAnchor),
+            openingHint.centerYAnchor.constraint(equalTo: contentContainer.centerYAnchor, constant: -ControlBar.windowHeight / 2),
+            openingHint.widthAnchor.constraint(lessThanOrEqualTo: contentContainer.widthAnchor, constant: -32),
         ])
         // Placed by frame above the control bar (see showSeekPreview), below the up-next card.
         contentContainer.addSubview(seekPreview, positioned: .below, relativeTo: upNext)
@@ -289,6 +311,21 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
     /// A file started loading: drop the "Drop a file here" hint right away.
     func showLoading() {
         placeholder.isHidden = true
+        openingHint.isHidden = true
+    }
+
+    func showOpeningHint(fileName: String) {
+        openingHintLabel.stringValue = "Still opening “\(fileName)”…\n\nmacOS may be waiting for permission to read this folder. If no dialog appears, allow Open Player under Privacy & Security → Files & Folders (or Full Disk Access), then open the file again."
+        openingHint.isHidden = false
+    }
+
+    func hideOpeningHint() {
+        openingHint.isHidden = true
+    }
+
+    @objc private func openPrivacySettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")!
+        NSWorkspace.shared.open(url)
     }
 
     func setTitle(for url: URL?) {

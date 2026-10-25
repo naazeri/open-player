@@ -4,6 +4,8 @@ name: Release
 # Release notes come from docs/release-notes/<tag>.md; install steps and the checksum are added here.
 # Every release also carries appcast.xml, signed with the SPARKLE_PRIVATE_KEY secret, which the app's
 # updater reads from releases/latest/download/appcast.xml. CURRENT_PROJECT_VERSION must go up each time.
+# The app is signed with the self-signed "Open Player Code Signing" certificate from the
+# SIGNING_CERTIFICATE_P12 / SIGNING_CERTIFICATE_PASSWORD secrets, so its identity stays the same.
 on:
   push:
     tags: ['v*']
@@ -38,6 +40,23 @@ jobs:
 
       - name: Install build tools
         run: brew install mpv xcodegen dylibbundler
+
+      - name: Import the signing certificate
+        env:
+          SIGNING_CERTIFICATE_P12: ${{ secrets.SIGNING_CERTIFICATE_P12 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          test -n "$SIGNING_CERTIFICATE_P12" || { echo "::error::The SIGNING_CERTIFICATE_P12 secret is missing"; exit 1; }
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 16)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$SIGNING_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$SIGNING_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/signing.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
 
       - name: Build the release
         run: scripts/build.sh release

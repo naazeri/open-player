@@ -53,6 +53,9 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     private var lastRenderedPosition = -1.0
     private var pendingResize = false
     private var pendingStartMessage: String?
+    private var pendingRecentDocument: URL?
+    /// Fires when a file hasn't opened after a few seconds (see `showOpeningHint`).
+    private var openingWatchdog: Timer?
     private var lastResumeSave = Date.distantPast
     private var lastSpeed = 1.0
     /// The speed to return to when the 2× hold on the video ends.
@@ -66,6 +69,8 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     /// Folder scans run in the background; a newer playlist change makes older results stale.
     private var scanGeneration = 0
     private var pendingScan: (generation: Int, url: URL, scope: PlaylistScope)?
+    /// Next/previous file or the end of a file while the folder scan is still running.
+    private var afterScan: (() -> Void)?
     /// mpv reports the end of a file with `eof-reached` (keep-open); handled once per file.
     private var endHandled = false
     private var atEnd = false
@@ -273,6 +278,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     private func setPlaylist(_ items: [URL], play index: Int, startAt: Double? = nil) {
         scanGeneration += 1
         pendingScan = nil
+        afterScan = nil
         playlist.items = items
         play(index: index, startAt: startAt)
     }
@@ -305,6 +311,11 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
             pendingStartMessage = "Resumed at \(TimeFormat.long(resume))  (Backspace: start over)"
         }
 
+        openingWatchdog?.invalidate()
+        openingWatchdog = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            guard let self, self.currentURL == url, !self.state.isIdle else { return }
+            self.windowController?.showOpeningHint(fileName: url.lastPathComponent)
+        }
         var command = ["loadfile", url.path, "replace"]
         if let start { command += ["-1", "start=\(start)"] }
         Signpost.event("loadfile")
@@ -328,13 +339,16 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         render()
     }
 
+    /// Added to Open Recent once it has actually opened: macOS reads the file to make the
+    /// entry, and while it waits for folder permission, quitting waited for that entry too.
     private func noteRecentDocument(_ url: URL) {
-        DispatchQueue.main.async { NSDocumentController.shared.noteNewRecentDocumentURL(url) }
+        pendingRecentDocument = url
     }
 
     /// Fills the playlist with the rest of `url`'s folder without delaying playback.
     private func scanFolder(around url: URL) {
         scanGeneration += 1
+        afterScan = nil
         let generation = scanGeneration
         let scope = settings.value.playlistScope
         pendingScan = (generation, url, scope)
@@ -348,26 +362,34 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         guard generation == scanGeneration, pendingScan?.generation == generation, currentURL == url else { return }
         pendingScan = nil
         let key = url.standardizedFileURL
-        guard let index = items.firstIndex(where: { $0.standardizedFileURL == key }) else { return }
-        var items = items
-        items[index] = url // keep the exact URL that is playing (database key, title)
-        playlist.items = items
-        playlist.currentIndex = index
-        render()
+        if let index = items.firstIndex(where: { $0.standardizedFileURL == key }) {
+            var items = items
+            items[index] = url // keep the exact URL that is playing (database key, title)
+            playlist.items = items
+            playlist.currentIndex = index
+            render()
+        }
+        let action = afterScan
+        afterScan = nil
+        action?()
     }
 
-    /// Next/previous file or the end of a file right after opening: finish the folder scan now.
-    private func completePendingScan() {
-        guard let scan = pendingScan else { return }
-        guard scan.generation == scanGeneration, currentURL == scan.url else {
+    /// Runs `action` once the folder scan has filled the playlist (right away when it has). The
+    /// main thread never scans itself: listing a folder can wait on a macOS permission answer.
+    private func whenScanned(_ action: @escaping () -> Void) {
+        if let scan = pendingScan, scan.generation == scanGeneration, currentURL == scan.url {
+            afterScan = action
+        } else {
             pendingScan = nil
-            return
+            action()
         }
-        applyScan(FolderScanner.playlist(for: scan.url, scope: scan.scope), generation: scan.generation, url: scan.url)
     }
 
     private func playRelative(_ offset: Int) {
-        completePendingScan()
+        whenScanned { [weak self] in self?.playRelativeNow(offset) }
+    }
+
+    private func playRelativeNow(_ offset: Int) {
         guard let index = playlist.currentIndex else { return }
         let target = index + offset
         if playlist.items.indices.contains(target) {
@@ -377,13 +399,21 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         }
     }
 
+    private func stopOpeningWatchdog() {
+        openingWatchdog?.invalidate()
+        openingWatchdog = nil
+        windowController?.hideOpeningHint()
+    }
+
     func closePlayback() {
+        stopOpeningWatchdog()
         cancelUpNext()
         closeSeekPreview()
         saveResumePosition()
         mpv.command(["stop"])
         scanGeneration += 1
         pendingScan = nil
+        afterScan = nil
         playlist.currentIndex = nil
         state.isIdle = true
         state.position = 0
@@ -402,6 +432,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
 
     /// The window was closed but the app keeps running: stop, and start fresh next time.
     private func resetAfterWindowClosed() {
+        stopOpeningWatchdog()
         cancelUpNext()
         closeSeekPreview()
         saveResumePosition()
@@ -410,6 +441,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         mpv.setFlag("pause", true)
         scanGeneration += 1
         pendingScan = nil
+        afterScan = nil
         playlist.items = []
         playlist.currentIndex = nil
         state.isIdle = true
@@ -471,6 +503,11 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
 
     private func handleFileLoaded() {
         Signpost.event("fileLoaded")
+        stopOpeningWatchdog()
+        if let url = pendingRecentDocument, url == currentURL {
+            pendingRecentDocument = nil
+            NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        }
         let videoTrack = mpv.getInt("current-tracks/video/id")
         let isImage = mpv.getFlag("current-tracks/video/image") ?? false
         let isAlbumArt = mpv.getFlag("current-tracks/video/albumart") ?? false
@@ -519,6 +556,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     }
 
     private func handleEndFile(_ reason: MPVEndReason) {
+        if case .redirect = reason {} else { stopOpeningWatchdog() }
         switch reason {
         case .eof:
             // With keep-open the end normally arrives as `eof-reached`; this is a fallback.
@@ -604,7 +642,10 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         guard !endHandled else { return }
         endHandled = true
         if let url = currentURL { bookmarks.store.clearResumePosition(path: BookmarkService.key(for: url)) }
-        completePendingScan()
+        whenScanned { [weak self] in self?.playNextAfterEnd() }
+    }
+
+    private func playNextAfterEnd() {
         guard let index = playlist.currentIndex, index + 1 < playlist.items.count else {
             mpv.command(["stop"])
             finishPlayback()
@@ -1083,8 +1124,17 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         saveResumePosition()
         settings.saveNow()
         mpv.command(["stop"])
-        windowController.videoView.videoLayer.destroyRenderContext()
-        mpv.destroy()
+        // mpv only finishes once a pending file open returns, and an open that macOS holds for a
+        // permission answer never does: quitting then hung. The process ends anyway, so give
+        // mpv a second to shut down cleanly and then go.
+        let done = DispatchSemaphore(value: 0)
+        let layer = windowController.videoView.videoLayer
+        DispatchQueue.global(qos: .userInitiated).async { [mpv] in
+            layer.destroyRenderContext()
+            mpv.destroy()
+            done.signal()
+        }
+        _ = done.wait(timeout: .now() + 1)
     }
 }
 

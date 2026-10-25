@@ -149,6 +149,12 @@ the previous release (Sparkle compares build numbers), and the repository secret
 `OpenPlayer/Support/Info.plist`. Keep a backup of that key: without it, existing installs can't be
 updated automatically any more.
 
+Releases are signed with the self-signed "Open Player Code Signing" certificate (secrets
+`SIGNING_CERTIFICATE_P12`, base64, and `SIGNING_CERTIFICATE_PASSWORD`). It doesn't replace
+notarization, but it keeps the app's identity the same from one version to the next, so macOS
+keeps the folder permissions people granted. Without the certificate `scripts/build.sh` signs
+ad-hoc and warns.
+
 Run the unit tests with:
 
 ```bash
