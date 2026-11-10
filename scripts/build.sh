@@ -15,6 +15,8 @@ config=Debug
 [[ "${1:-}" == "release" ]] && config=Release
 
 xcodegen generate --quiet
+# Keep Spotlight out of build/, or every built copy shows up as another Open Player in Launchpad.
+mkdir -p build && touch build/.metadata_never_index
 actions=(build)
 [[ $config == Release ]] && actions=(clean build)
 xcodebuild -project OpenPlayer.xcodeproj -scheme OpenPlayer -configuration $config \
