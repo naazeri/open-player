@@ -94,7 +94,7 @@ jobs:
             echo "<sparkle:version>$build</sparkle:version>"
             echo "<sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>"
             echo "<sparkle:minimumSystemVersion>$minos</sparkle:minimumSystemVersion>"
-            echo '<description sparkle:format="plain-text"><![CDATA['
+            echo '<description sparkle:format="markdown"><![CDATA['
             sed 's/]]>/]] >/g' "docs/release-notes/$GITHUB_REF_NAME.md"
             echo ']]></description>'
             echo "<enclosure url=\"https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$zip\" $signature type=\"application/octet-stream\"/>"
