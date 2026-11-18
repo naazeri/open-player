@@ -38,7 +38,8 @@
   last frame (length adjustable, or turn it off, in Settings).
 - **Smart window.** The window takes the video's resolution (scaled to fit your screen). Audio
   files get a compact player bar instead of a black box.
-- **Resume.** Every file continues where you stopped watching.
+- **Resume.** Every file continues where you stopped watching. Pressing Play in an empty player
+  opens the last file again.
 - **Modern look.** A floating Liquid Glass control bar (macOS 26+) that switches to two rows in
   narrow windows such as portrait videos. Clicking the video pauses or plays it and briefly shows
   ▶︎ / ❚❚, like YouTube.

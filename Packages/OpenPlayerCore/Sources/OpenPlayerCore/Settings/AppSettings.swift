@@ -48,6 +48,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     // App
     /// Closing the player window stops playback but keeps the app running, so the next file opens faster.
     public var keepRunningAfterClose = true
+    /// The last file that opened: Play in an empty player starts it again.
+    public var lastPlayedPath: String?
 
     public init() {}
 
@@ -67,6 +69,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case keepRunningAfterClose
         case nextFileCountdown
         case nextFileCountdownSeconds
+        case lastPlayedPath
     }
 
     public init(from decoder: Decoder) throws {
@@ -97,6 +100,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         keepRunningAfterClose = value(.keepRunningAfterClose, d.keepRunningAfterClose)
         nextFileCountdown = value(.nextFileCountdown, d.nextFileCountdown)
         nextFileCountdownSeconds = value(.nextFileCountdownSeconds, d.nextFileCountdownSeconds)
+        lastPlayedPath = value(.lastPlayedPath, d.lastPlayedPath)
         sanitize()
     }
 

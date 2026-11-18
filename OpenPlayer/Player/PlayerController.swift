@@ -504,6 +504,9 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     private func handleFileLoaded() {
         Signpost.event("fileLoaded")
         stopOpeningWatchdog()
+        if let url = currentURL, settings.value.lastPlayedPath != url.path {
+            settings.update { $0.lastPlayedPath = url.path }
+        }
         if let url = pendingRecentDocument, url == currentURL {
             pendingRecentDocument = nil
             NSDocumentController.shared.noteNewRecentDocumentURL(url)
@@ -813,7 +816,12 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
 
     private func togglePause() {
         if state.isIdle {
-            if let index = playlist.currentIndex ?? (playlist.items.isEmpty ? nil : 0) { play(index: index) }
+            if let index = playlist.currentIndex ?? (playlist.items.isEmpty ? nil : 0) {
+                play(index: index)
+            } else if let path = settings.value.lastPlayedPath {
+                // Empty player (just launched, or its window was closed): play the last file again.
+                open([URL(fileURLWithPath: path)])
+            }
             return
         }
         if atEnd {
@@ -1069,7 +1077,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
         add(.openFile)
         add(.openFolder)
         menu.addItem(.separator())
-        add(.playPause, enabled: !state.isIdle)
+        add(.playPause, enabled: !state.isIdle || !playlist.items.isEmpty || settings.value.lastPlayedPath != nil)
         add(.addBookmark, enabled: !state.isIdle)
         add(.showBookmarks)
         add(.playlist)

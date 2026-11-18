@@ -252,6 +252,14 @@ final class SettingsAndBackupTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: Data(#"{"nextFileCountdownSeconds": 99}"#.utf8)).nextFileCountdownSeconds, 30)
     }
 
+    func testLastPlayedPathPersists() throws {
+        XCTAssertNil(try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).lastPlayedPath)
+        var settings = AppSettings()
+        settings.lastPlayedPath = "/Users/me/Movies/فیلم.mkv"
+        let roundTrip = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(roundTrip.lastPlayedPath, "/Users/me/Movies/فیلم.mkv")
+    }
+
     func testSpeedSteps() {
         // Label click: 1.0 → 1.25 → 1.5 → 1.75 → 2.0 → 1.0
         var speed = 1.0
