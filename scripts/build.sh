@@ -15,14 +15,15 @@ config=Debug
 [[ "${1:-}" == "release" ]] && config=Release
 
 xcodegen generate --quiet
-# Keep Spotlight out of build/, or every built copy shows up as another Open Player in Launchpad.
-mkdir -p build && touch build/.metadata_never_index
+# Built apps live in folders ending in ".noindex", which Spotlight skips; otherwise every built
+# copy shows up as another Open Player in Launchpad and the app list.
+mkdir -p build
 actions=(build)
 [[ $config == Release ]] && actions=(clean build)
 xcodebuild -project OpenPlayer.xcodeproj -scheme OpenPlayer -configuration $config \
-  -derivedDataPath build/DerivedData "${actions[@]}" | grep -E "error:|warning: .*swift|BUILD" || true
+  -derivedDataPath build/DerivedData.noindex "${actions[@]}" | grep -E "error:|warning: .*swift|BUILD" || true
 
-app="build/DerivedData/Build/Products/$config/Open Player.app"
+app="build/DerivedData.noindex/Build/Products/$config/Open Player.app"
 [[ -d "$app" ]] || { echo "Build failed"; exit 1; }
 # Keep build outputs out of Launch Services, so opening a video always uses the installed app
 # instead of a copy that the next build replaces.
@@ -33,9 +34,10 @@ unregister "$app"
 if [[ $config == Release ]]; then
   command -v dylibbundler >/dev/null || { echo "Missing dylibbundler: brew install dylibbundler"; exit 1; }
   # Bundle into a copy so the Xcode build output stays untouched.
-  rm -rf "build/Open Player.app"
-  cp -R "$app" "build/Open Player.app"
-  app="build/Open Player.app"
+  rm -rf "build/app.noindex"
+  mkdir -p "build/app.noindex"
+  cp -R "$app" "build/app.noindex/Open Player.app"
+  app="build/app.noindex/Open Player.app"
   # dylibbundler empties Frameworks first; keep Sparkle (already embedded by Xcode) out of its way.
   sparkle=$(mktemp -d)
   mv "$app/Contents/Frameworks/Sparkle.framework" "$sparkle/"

@@ -121,7 +121,7 @@ cd open-player
 scripts/build.sh release
 ```
 
-This creates `build/Open Player.app` (with libmpv bundled inside) and a .zip and .dmg next to it.
+This creates `build/app.noindex/Open Player.app` (with libmpv bundled inside) and a .zip and .dmg next to it.
 `scripts/build.sh` without arguments makes a Debug build that links Homebrew's libmpv.
 For Xcode, run `xcodegen generate` and open `OpenPlayer.xcodeproj`.
 

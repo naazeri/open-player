@@ -18,7 +18,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check that the tag matches the app version
         run: |
@@ -67,7 +67,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           test -n "$SPARKLE_PRIVATE_KEY" || { echo "::error::The SPARKLE_PRIVATE_KEY secret is missing"; exit 1; }
-          plist="build/Open Player.app/Contents/Info.plist"
+          plist="build/app.noindex/Open Player.app/Contents/Info.plist"
           build=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$plist")
           minos=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$plist")
           # Sparkle compares build numbers: each release needs a higher CURRENT_PROJECT_VERSION.
@@ -81,7 +81,7 @@ jobs:
           zip="Open-Player-$VERSION-macOS-arm64.zip"
           key="$RUNNER_TEMP/sparkle.key"
           printf '%s' "$SPARKLE_PRIVATE_KEY" > "$key"
-          signature=$(build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update --ed-key-file "$key" "build/$zip")
+          signature=$(build/DerivedData.noindex/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update --ed-key-file "$key" "build/$zip")
           rm -f "$key"
           {
             echo '<?xml version="1.0" encoding="utf-8"?>'
@@ -110,7 +110,7 @@ jobs:
         run: |
           zip="build/Open-Player-$VERSION-macOS-arm64.zip"
           dmg="build/Open-Player-$VERSION-macOS-arm64.dmg"
-          minos=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "build/Open Player.app/Contents/Info.plist")
+          minos=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "build/app.noindex/Open Player.app/Contents/Info.plist")
           major=${minos%%.*}
           {
             cat "docs/release-notes/$GITHUB_REF_NAME.md"
