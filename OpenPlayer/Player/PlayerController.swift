@@ -61,6 +61,7 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
     /// The speed to return to when the 2× hold on the video ends.
     private var speedBeforeHold: Double?
     private let seekPreviewer = SeekPreviewer()
+    private var nowPlaying: NowPlaying?
     /// The time the seek bar preview shows, while the mouse is over the bar.
     private var previewTime: Double?
     private var previewRestTimer: Timer?
@@ -184,6 +185,20 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
             self?.windowController.toggleFullscreen()
         }
         video.onScroll = { [weak self] event in self?.handleScroll(event) }
+        nowPlaying = NowPlaying(handlers: .init(
+            play: { [weak self] in
+                guard let self else { return }
+                if self.state.isIdle || self.isPaused || self.atEnd { self.togglePause() }
+            },
+            pause: { [weak self] in
+                guard let self, !self.state.isIdle, !self.isPaused else { return }
+                self.mpv.setFlag("pause", true)
+            },
+            toggle: { [weak self] in self?.togglePause() },
+            next: { [weak self] in self?.perform(.nextFile) },
+            previous: { [weak self] in self?.perform(.previousFile) },
+            seek: { [weak self] time in self?.mpv.command(["seek", String(time), "absolute+exact"]) }
+        ))
         video.onHoldStart = { [weak self] in
             guard let self, !self.state.isIdle, !self.isPaused, !self.atEnd else { return false }
             self.speedBeforeHold = self.state.speed
@@ -1125,6 +1140,9 @@ final class PlayerController: NSObject, MPVPlayerDelegate {
             self.lastRenderedPosition = self.state.position
             guard self.windowController != nil else { return }
             self.windowController.controlBar.update(state: self.state)
+            self.nowPlaying?.update(title: self.currentURL?.deletingPathExtension().lastPathComponent,
+                                    duration: self.state.duration, position: self.state.position,
+                                    paused: self.state.isPaused, idle: self.state.isIdle, speed: self.state.speed)
         }
     }
 

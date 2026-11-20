@@ -38,6 +38,8 @@
   last frame (length adjustable, or turn it off, in Settings).
 - **Smart window.** The window takes the video's resolution (scaled to fit your screen). Audio
   files get a compact player bar instead of a black box.
+- **Media keys.** Headphone and keyboard play/pause, next and previous control the player, and the
+  current file appears in Control Center's Now Playing.
 - **Resume.** Every file continues where you stopped watching. Pressing Play in an empty player
   opens the last file again.
 - **Modern look.** A floating Liquid Glass control bar (macOS 26+) that switches to two rows in
